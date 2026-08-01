@@ -16,9 +16,23 @@ def generate_launch_description():
     gazebo_pkg_prefix = get_package_share_directory('gazebo')
     gazebo_sim_ign = os.path.join(gazebo_pkg_prefix, 'launch', 'sim.ign')
     sdf_file_path = os.path.join(gazebo_pkg_prefix, 'launch', 'robot_env.sdf')
+    urdf_file_path = os.path.join(gazebo_pkg_prefix, 'launch', 'asd_world.urdf')
     
     gz_sim = ExecuteProcess(cmd=['ign', 'launch', '-v 4', f'{gazebo_sim_ign}'])
     gz_sim_server = ExecuteProcess(cmd=['ign', 'gazebo', '-s', '-v 4', '-r', f'{sdf_file_path}'])
+
+    with open(urdf_file_path, 'r') as urdf_file:
+        robot_desc = urdf_file.read()
+
+    # Publishes robot_description (URDF) and static TF for the environment so
+    # Foxglove can render the 3D robot and obstacle models
+    robot_state_publisher = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        name='robot_state_publisher',
+        output='screen',
+        parameters=[{'robot_description': robot_desc}],
+    )
 
     # Bridge
     bridge = Node(
@@ -44,5 +58,6 @@ def generate_launch_description():
     return LaunchDescription([
         gz_sim,
         gz_sim_server,
-        bridge
+        bridge,
+        robot_state_publisher
     ])
