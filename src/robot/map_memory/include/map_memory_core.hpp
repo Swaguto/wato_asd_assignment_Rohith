@@ -7,6 +7,7 @@ namespace robot
 {
 
 class MapMemoryCore {
+  
   public:
     explicit MapMemoryCore(const rclcpp::Logger& logger);
 
