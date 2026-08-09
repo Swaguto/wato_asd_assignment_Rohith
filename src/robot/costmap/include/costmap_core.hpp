@@ -27,7 +27,7 @@ class CostmapCore {
     double origin_x_ = -5.0;
     double origin_y_ = -5.0;
     double inflation_radius_ = 1.0;
-    const int8_t MAX_COST_ = 100;
+    const int8_t MAX_COST_ = 100; 
 
     void initializeCostmap();
     void markObstacles(const sensor_msgs::msg::LaserScan& scan);

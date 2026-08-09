@@ -19,7 +19,7 @@ MapMemoryNode::MapMemoryNode() : Node("map_memory"), map_memory_(robot::MapMemor
 }
 
 void MapMemoryNode::costmapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
-  latest_costmap_ = *msg;      // copy: `msg` is a pointer, `*msg` dereferences
+  latest_costmap_ = *msg;
   costmap_received_ = true;
 }
 
@@ -32,11 +32,10 @@ void MapMemoryNode::updateMap(){
   if (!costmap_received_ || !odom_received_){
     return;
   }
-  auto map = latest_costmap_;    // start from latest local costmap
-  // TODO: use latest_odom_ (x, y, yaw from msg->pose.pose) to
-  //       transform/merge the local costmap into the global map frame
-  map.header.frame_id = "map";
-  map_pub_->publish(map);        // publish the merged grid
+  map_memory_.updateMap(latest_costmap_, latest_odom_);
+  auto map = map_memory_.getMap();
+  map.header.stamp = this->now();
+  map_pub_->publish(map);
 }
 
 int main(int argc, char ** argv)

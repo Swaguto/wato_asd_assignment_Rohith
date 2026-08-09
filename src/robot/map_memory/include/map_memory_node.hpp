@@ -7,7 +7,6 @@
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 
-
 class MapMemoryNode : public rclcpp::Node {
   public:
     MapMemoryNode();
@@ -18,16 +17,14 @@ class MapMemoryNode : public rclcpp::Node {
   private:
     robot::MapMemoryCore map_memory_;
 
-    // 2 subscribers + 1 publisher + 1 timer
-    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_sub_; //sub to occupancy grid
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_; //sub to odometry filtered
-    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_; //pub to map topic
+    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
     rclcpp::TimerBase::SharedPtr map_timer_;
 
-    // storage: the latest data each subscriber received
     nav_msgs::msg::OccupancyGrid latest_costmap_;
     nav_msgs::msg::Odometry latest_odom_;
-    bool costmap_received_ = false;      // so updateMap knows data exists
+    bool costmap_received_ = false;
     bool odom_received_ = false;
 };
 

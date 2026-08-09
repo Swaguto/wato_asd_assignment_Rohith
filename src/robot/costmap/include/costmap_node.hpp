@@ -18,4 +18,5 @@ class CostmapNode : public rclcpp::Node {
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr lidar_sub_;
 };
 
+
 #endif
