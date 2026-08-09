@@ -1,7 +1,13 @@
 #include <chrono>
+#include <cmath>
 #include <memory>
 
 #include "planner_node.hpp"
+
+namespace
+{
+constexpr double kGoalReachedDist = 0.2;
+}
 
 PlannerNode::PlannerNode() : Node("planner"), planner_(robot::PlannerCore(this->get_logger())) {
   map_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
@@ -18,35 +24,48 @@ PlannerNode::PlannerNode() : Node("planner"), planner_(robot::PlannerCore(this->
 }
 
 void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
-  map_ = msg;
+  latest_map_ = *msg;
+  map_received_ = true;
 }
 
 void PlannerNode::goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {
-  goal_ = msg;
-  runPlanning();
+  latest_goal_ = *msg;
+  goal_received_ = true;
+  goal_reached_ = false;
+  planPath();
 }
 
 void PlannerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-  odom_ = msg;
+  latest_odom_ = *msg;
+  odom_received_ = true;
 }
 
 void PlannerNode::timerCallback() {
-  runPlanning();
+  if (!goal_reached_ && map_received_ && goal_received_ && odom_received_) {
+    planPath();
+  }
 }
 
-void PlannerNode::runPlanning() {
-  if (!map_ || !goal_ || !odom_) {
+void PlannerNode::planPath() {
+  if (!map_received_ || !goal_received_ || !odom_received_) {
     return;
   }
 
-  auto start = std::make_shared<geometry_msgs::msg::PointStamped>();
-  start->header.frame_id = map_->header.frame_id;
-  start->point.x = odom_->pose.pose.position.x;
-  start->point.y = odom_->pose.pose.position.y;
-  start->point.z = 0.0;
+  const double dx = latest_goal_.point.x - latest_odom_.pose.pose.position.x;
+  const double dy = latest_goal_.point.y - latest_odom_.pose.pose.position.y;
+  if (std::hypot(dx, dy) < kGoalReachedDist) {
+    goal_reached_ = true;
+    return;
+  }
 
-  nav_msgs::msg::Path path = planner_.planPath(*map_, *start, *goal_);
-  path.header.frame_id = map_->header.frame_id;
+  geometry_msgs::msg::PointStamped start;
+  start.header.frame_id = latest_map_.header.frame_id;
+  start.point.x = latest_odom_.pose.pose.position.x;
+  start.point.y = latest_odom_.pose.pose.position.y;
+  start.point.z = 0.0;
+
+  nav_msgs::msg::Path path = planner_.planPath(latest_map_, start, latest_goal_);
+  path.header.frame_id = latest_map_.header.frame_id;
   path.header.stamp = this->now();
 
   if (path.poses.empty()) {

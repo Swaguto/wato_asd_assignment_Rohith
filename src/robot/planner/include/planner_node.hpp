@@ -19,13 +19,17 @@ class PlannerNode : public rclcpp::Node {
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void timerCallback();
 
-    void runPlanning();
+    void planPath();
 
     robot::PlannerCore planner_;
 
-    nav_msgs::msg::OccupancyGrid::SharedPtr map_;
-    geometry_msgs::msg::PointStamped::SharedPtr goal_;
-    nav_msgs::msg::Odometry::SharedPtr odom_;
+    nav_msgs::msg::OccupancyGrid latest_map_;
+    geometry_msgs::msg::PointStamped latest_goal_;
+    nav_msgs::msg::Odometry latest_odom_;
+    bool map_received_ = false;
+    bool goal_received_ = false;
+    bool odom_received_ = false;
+    bool goal_reached_ = false;
 
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr goal_sub_;
