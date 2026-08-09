@@ -11,23 +11,50 @@ PlannerNode::PlannerNode() : Node("planner"), planner_(robot::PlannerCore(this->
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
     "/odom/filtered", 10, std::bind(&PlannerNode::odomCallback, this, std::placeholders::_1));
 
-  map_pub_ = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
+  path_pub_ = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
 
   timer_ = this->create_wall_timer(
     std::chrono::seconds(1), std::bind(&PlannerNode::timerCallback, this));
 }
 
-// TODO: implement path planning logic (A*) here
-void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {}
+void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+  map_ = msg;
+}
 
-// TODO: store goal point and trigger planning
-void PlannerNode::goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {}
+void PlannerNode::goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {
+  goal_ = msg;
+  runPlanning();
+}
 
-// TODO: track robot position and goal progress
-void PlannerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {}
+void PlannerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+  odom_ = msg;
+}
 
-// TODO: check for goal reached / timeout and replan
-void PlannerNode::timerCallback() {}
+void PlannerNode::timerCallback() {
+  runPlanning();
+}
+
+void PlannerNode::runPlanning() {
+  if (!map_ || !goal_ || !odom_) {
+    return;
+  }
+
+  auto start = std::make_shared<geometry_msgs::msg::PointStamped>();
+  start->header.frame_id = map_->header.frame_id;
+  start->point.x = odom_->pose.pose.position.x;
+  start->point.y = odom_->pose.pose.position.y;
+  start->point.z = 0.0;
+
+  nav_msgs::msg::Path path = planner_.planPath(*map_, *start, *goal_);
+  path.header.frame_id = map_->header.frame_id;
+  path.header.stamp = this->now();
+
+  if (path.poses.empty()) {
+    RCLCPP_WARN(this->get_logger(), "Could not find a path");
+    return;
+  }
+  path_pub_->publish(path);
+}
 
 int main(int argc, char ** argv)
 {

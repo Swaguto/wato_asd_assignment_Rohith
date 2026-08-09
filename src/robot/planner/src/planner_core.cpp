@@ -3,7 +3,7 @@
 namespace robot
 {
 
-PlannerCore::PlannerCore(const rclcpp::Logger& logger) 
+PlannerCore::PlannerCore(const rclcpp::Logger& logger)
 : logger_(logger) {}
 
-} 
+}
