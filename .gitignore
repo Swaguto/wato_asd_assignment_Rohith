@@ -2,4 +2,7 @@
 __pycache__
 .vscode/
 
-watod-config.local.sh
+# Local colcon build artifacts
+build/
+install/
+log/
