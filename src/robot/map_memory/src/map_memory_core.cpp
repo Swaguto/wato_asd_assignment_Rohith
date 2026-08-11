@@ -12,7 +12,6 @@ constexpr int kGridWidth = 500;
 constexpr int kGridHeight = 500;
 constexpr double kGridOriginX = -25.0;
 constexpr double kGridOriginY = -25.0;
-constexpr int kObstacleThreshold = 50;
 }
 
 MapMemoryCore::MapMemoryCore(const rclcpp::Logger& logger)
@@ -34,28 +33,18 @@ void MapMemoryCore::initialize(const nav_msgs::msg::OccupancyGrid& sample)
 void MapMemoryCore::mergeCostmap(const nav_msgs::msg::OccupancyGrid& local,
                                  const nav_msgs::msg::Odometry& odom)
 {
-  const double robot_x = odom.pose.pose.position.x;
-  const double robot_y = odom.pose.pose.position.y;
-  const auto& q = odom.pose.pose.orientation;
-  const double yaw = std::atan2(2.0 * (q.w * q.z + q.x * q.y),
-                                1.0 - 2.0 * (q.y * q.y + q.z * q.z));
-  const double cos_yaw = std::cos(yaw);
-  const double sin_yaw = std::sin(yaw);
-
+  (void)odom;
   const double l_res = local.info.resolution;
   const int l_width = static_cast<int>(local.info.width);
 
   for (int i = 0; i < static_cast<int>(local.data.size()); ++i) {
-    if (local.data[i] < kObstacleThreshold) {
-      continue;
-    }
     const int local_row = i / l_width;
     const int local_col = i % l_width;
     const double local_x = local.info.origin.position.x + (local_col + 0.5) * l_res;
     const double local_y = local.info.origin.position.y + (local_row + 0.5) * l_res;
 
-    const double global_x = robot_x + local_x * cos_yaw - local_y * sin_yaw;
-    const double global_y = robot_y + local_x * sin_yaw + local_y * cos_yaw;
+    const double global_x = local_x;
+    const double global_y = local_y;
 
     const int global_col = static_cast<int>(std::floor(
       (global_x - global_map_.info.origin.position.x) / global_map_.info.resolution));
@@ -68,7 +57,7 @@ void MapMemoryCore::mergeCostmap(const nav_msgs::msg::OccupancyGrid& local,
     }
 
     const size_t global_idx = global_row * global_map_.info.width + global_col;
-    global_map_.data[global_idx] = std::max(global_map_.data[global_idx], local.data[i]);
+    global_map_.data[global_idx] = local.data[i];
   }
 }
 

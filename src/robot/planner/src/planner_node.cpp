@@ -14,13 +14,15 @@ PlannerNode::PlannerNode() : Node("planner"), planner_(robot::PlannerCore(this->
     "/map", 10, std::bind(&PlannerNode::mapCallback, this, std::placeholders::_1));
   goal_sub_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
     "/goal_point", 10, std::bind(&PlannerNode::goalCallback, this, std::placeholders::_1));
+  goal_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+    "/move_base_simple/goal", 10, std::bind(&PlannerNode::goalPoseCallback, this, std::placeholders::_1));
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
     "/odom/filtered", 10, std::bind(&PlannerNode::odomCallback, this, std::placeholders::_1));
 
   path_pub_ = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
 
   timer_ = this->create_wall_timer(
-    std::chrono::seconds(1), std::bind(&PlannerNode::timerCallback, this));
+    std::chrono::seconds(4), std::bind(&PlannerNode::timerCallback, this));
 }
 
 void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
@@ -30,6 +32,16 @@ void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 
 void PlannerNode::goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {
   latest_goal_ = *msg;
+  goal_received_ = true;
+  goal_reached_ = false;
+  planPath();
+}
+
+void PlannerNode::goalPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+  latest_goal_.header = msg->header;
+  latest_goal_.point.x = msg->pose.position.x;
+  latest_goal_.point.y = msg->pose.position.y;
+  latest_goal_.point.z = 0.0;
   goal_received_ = true;
   goal_reached_ = false;
   planPath();

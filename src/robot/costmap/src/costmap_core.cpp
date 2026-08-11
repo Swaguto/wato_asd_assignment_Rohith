@@ -8,6 +8,14 @@ namespace robot
 
 CostmapCore::CostmapCore(const rclcpp::Logger& logger) : logger_(logger) {}
 
+void CostmapCore::setPose(double x, double y, double yaw) {
+  robot_x_ = x;
+  robot_y_ = y;
+  robot_yaw_ = yaw;
+  origin_x_ = robot_x_ - (width_ * resolution_) / 2.0;
+  origin_y_ = robot_y_ - (height_ * resolution_) / 2.0;
+}
+
 void CostmapCore::updateCostmap(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
   initializeCostmap();
   markObstacles(*scan);
@@ -24,6 +32,9 @@ void CostmapCore::markObstacles(const sensor_msgs::msg::LaserScan& scan) {
     if (range <= scan.range_min || range >= scan.range_max) {
       continue;
     }
+    if (range < 0.8) {
+      continue;
+    }
     double angle = scan.angle_min + i * scan.angle_increment;
 
     int x_grid = 0;
@@ -38,10 +49,15 @@ void CostmapCore::markObstacles(const sensor_msgs::msg::LaserScan& scan) {
 }
 
 void CostmapCore::convertToGrid(double range, double angle, int& x_grid, int& y_grid) {
-  double x = range * std::cos(angle);
-  double y = range * std::sin(angle);
-  x_grid = static_cast<int>(std::floor((x - origin_x_) / resolution_));
-  y_grid = static_cast<int>(std::floor((y - origin_y_) / resolution_));
+  constexpr double kLidarOffsetX = 0.8;
+  const double lx = kLidarOffsetX + range * std::cos(angle);
+  const double ly = range * std::sin(angle);
+  const double cos_yaw = std::cos(robot_yaw_);
+  const double sin_yaw = std::sin(robot_yaw_);
+  const double wx = robot_x_ + lx * cos_yaw - ly * sin_yaw;
+  const double wy = robot_y_ + lx * sin_yaw + ly * cos_yaw;
+  x_grid = static_cast<int>(std::floor((wx - origin_x_) / resolution_));
+  y_grid = static_cast<int>(std::floor((wy - origin_y_) / resolution_));
 }
 
 void CostmapCore::inflateObstacles() {
@@ -75,7 +91,7 @@ void CostmapCore::inflateObstacles() {
 nav_msgs::msg::OccupancyGrid CostmapCore::getCostmapMsg() {
   nav_msgs::msg::OccupancyGrid msg;
   msg.header.stamp = rclcpp::Clock().now();
-  msg.header.frame_id = "odom";
+  msg.header.frame_id = "map";
   msg.info.resolution = resolution_;
   msg.info.width = static_cast<uint32_t>(width_);
   msg.info.height = static_cast<uint32_t>(height_);

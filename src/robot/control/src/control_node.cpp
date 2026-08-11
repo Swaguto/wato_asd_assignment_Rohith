@@ -1,11 +1,14 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
+#include <memory>
 
 #include "control_node.hpp"
 
 namespace
 {
-constexpr double kLookAhead = 0.3;
+constexpr std::size_t kLookAheadSteps = 5;
 }
 
 ControlNode::ControlNode() : Node("control"), control_(robot::ControlCore(this->get_logger())) {
@@ -36,15 +39,20 @@ void ControlNode::timerCallback() {
   const double robot_x = odom_->pose.pose.position.x;
   const double robot_y = odom_->pose.pose.position.y;
 
-  geometry_msgs::msg::PoseStamped target = path_->poses.back();
-  for (const auto& waypoint : path_->poses) {
-    const double dx = waypoint.pose.position.x - robot_x;
-    const double dy = waypoint.pose.position.y - robot_y;
-    if (std::hypot(dx, dy) >= kLookAhead) {
-      target = waypoint;
-      break;
+  std::size_t nearest = 0;
+  double best_dist = std::numeric_limits<double>::max();
+  for (std::size_t i = 0; i < path_->poses.size(); ++i) {
+    const double dx = path_->poses[i].pose.position.x - robot_x;
+    const double dy = path_->poses[i].pose.position.y - robot_y;
+    const double d = std::hypot(dx, dy);
+    if (d < best_dist) {
+      best_dist = d;
+      nearest = i;
     }
   }
+
+  const std::size_t idx = std::min(nearest + kLookAheadSteps, path_->poses.size() - 1);
+  const geometry_msgs::msg::PoseStamped& target = path_->poses[idx];
 
   cmd_vel_pub_->publish(control_.computeTwist(target, *odom_));
 }

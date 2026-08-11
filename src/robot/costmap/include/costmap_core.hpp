@@ -15,6 +15,7 @@ class CostmapCore {
     explicit CostmapCore(const rclcpp::Logger& logger);
 
     void updateCostmap(const sensor_msgs::msg::LaserScan::SharedPtr scan);
+    void setPose(double x, double y, double yaw);
     nav_msgs::msg::OccupancyGrid getCostmapMsg();
 
   private:
@@ -26,6 +27,9 @@ class CostmapCore {
     int height_ = 100;
     double origin_x_ = -5.0;
     double origin_y_ = -5.0;
+    double robot_x_ = 0.0;
+    double robot_y_ = 0.0;
+    double robot_yaw_ = 0.0;
     double inflation_radius_ = 1.0;
     const int8_t MAX_COST_ = 100; 
 
