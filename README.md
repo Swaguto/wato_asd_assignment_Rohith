@@ -10,3 +10,21 @@ These steps are to setup the monorepo to work on your own PC. We utilize docker 
 3. You're all set! You can begin the assignment by visiting the WATonomous Wiki.
 
 Link to Onboarding Assignment: https://wiki.watonomous.ca/
+
+## Building the robot stack
+
+All ROS 2 packages live under `src/robot`. Build and run them inside the
+assignment container (see `docker/robot`):
+
+```bash
+colcon build --symlink-install
+source install/setup.bash
+ros2 launch bringup_robot robot.launch.py
+```
+
+Expected running nodes: `costmap_node`, `map_memory_node`, `planner_node`,
+`control_node` (which also hosts the `lcm_relay` chassis driver bridge), and
+`odometry_spoof`. Tune behaviour through the `config/params.yaml` files in each
+package (grid size/resolution, inflation radius, speeds, map extents, planner
+period). See `DESIGN.md` for the architecture and the design decisions behind
+it.

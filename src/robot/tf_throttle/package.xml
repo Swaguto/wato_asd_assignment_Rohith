@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
-<?xml-model href="http://download.ros.org/schema/schema.xml" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>tf_throttle</name>
   <version>0.0.0</version>
-  <description>Throttles the high-rate Gazebo TF stream for visualization</description>
-  <maintainer email="rohith@todo.todo">rohith</maintainer>
-  <license>Apache-2.0</license>
+  <description>Relays /tf_raw to /tf at a fixed rate so TF consumers get a live transform tree</description>
+
+  <maintainer email="e23zhou@watonomous.ca">Eddy Zhou</maintainer>
+  <license>Apache2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

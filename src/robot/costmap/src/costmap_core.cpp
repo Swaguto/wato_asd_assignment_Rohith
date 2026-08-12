@@ -1,105 +1,168 @@
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 #include "costmap_core.hpp"
 
 namespace robot
 {
 
-CostmapCore::CostmapCore(const rclcpp::Logger& logger) : logger_(logger) {}
-
-void CostmapCore::setPose(double x, double y, double yaw) {
-  robot_x_ = x;
-  robot_y_ = y;
-  robot_yaw_ = yaw;
-  origin_x_ = robot_x_ - (width_ * resolution_) / 2.0;
-  origin_y_ = robot_y_ - (height_ * resolution_) / 2.0;
+namespace
+{
+constexpr int8_t kOccupiedCost = 100;   // full-cost cell: an obstacle hit
+constexpr int8_t kSeedCost = 90;        // cells at/above this value restart inflation
 }
 
-void CostmapCore::updateCostmap(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
-  initializeCostmap();
-  markObstacles(*scan);
-  inflateObstacles();
+CostmapCore::CostmapCore(rclcpp::Node* node)
+: logger_(node != nullptr ? node->get_logger()
+                          : rclcpp::get_logger("costmap_core"))
+{
+  if (node == nullptr) {
+    return;
+  }
+  readParameters(node);
+  cells_.assign(static_cast<size_t>(width_) * height_, 0);
+  configured_ = true;
+  RCLCPP_INFO(logger_, "costmap ready: %dx%d cells @ %.2f m, origin (%.2f, %.2f), "
+               "inflation %.2f m", width_, height_, resolution_,
+               origin_x_, origin_y_, inflation_radius_);
 }
 
-void CostmapCore::initializeCostmap() {
-  grid_.assign(static_cast<size_t>(width_ * height_), 0);
+void CostmapCore::readParameters(rclcpp::Node* node) {
+  node->declare_parameter("costmap.resolution", 0.4);
+  node->declare_parameter("costmap.width", 120);
+  node->declare_parameter("costmap.height", 120);
+  node->declare_parameter("costmap.origin.position.x", -24.0);
+  node->declare_parameter("costmap.origin.position.y", -24.0);
+  node->declare_parameter("costmap.inflation_radius", 1.5);
+
+  resolution_ = node->get_parameter("costmap.resolution").as_double();
+  width_ = node->get_parameter("costmap.width").as_int();
+  height_ = node->get_parameter("costmap.height").as_int();
+  origin_x_ = node->get_parameter("costmap.origin.position.x").as_double();
+  origin_y_ = node->get_parameter("costmap.origin.position.y").as_double();
+  inflation_radius_ = node->get_parameter("costmap.inflation_radius").as_double();
 }
 
-void CostmapCore::markObstacles(const sensor_msgs::msg::LaserScan& scan) {
+void CostmapCore::update(const sensor_msgs::msg::LaserScan& scan) {
+  if (!configured_) {
+    return;
+  }
+
+  // Fresh map every scan: nothing from the previous reading carries over.
+  std::fill(cells_.begin(), cells_.end(), 0);
+
   for (size_t i = 0; i < scan.ranges.size(); ++i) {
-    double range = scan.ranges[i];
-    if (range <= scan.range_min || range >= scan.range_max) {
+    const double range = scan.ranges[i];
+    // NaN and out-of-range samples are not usable hits.
+    if (!(range >= scan.range_min && range <= scan.range_max)) {
       continue;
     }
-    if (range < 0.8) {
-      continue;
-    }
-    double angle = scan.angle_min + i * scan.angle_increment;
+    const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
+    const double x = range * std::cos(angle);
+    const double y = range * std::sin(angle);
 
-    int x_grid = 0;
-    int y_grid = 0;
-    convertToGrid(range, angle, x_grid, y_grid);
-
-    if (x_grid < 0 || x_grid >= width_ || y_grid < 0 || y_grid >= height_) {
+    const int gx = static_cast<int>(std::floor((x - origin_x_) / resolution_));
+    const int gy = static_cast<int>(std::floor((y - origin_y_) / resolution_));
+    if (gx < 0 || gx >= width_ || gy < 0 || gy >= height_) {
       continue;
     }
-    grid_[static_cast<size_t>(y_grid * width_ + x_grid)] = MAX_COST_;
+    cells_[static_cast<size_t>(gy) * width_ + gx] = kOccupiedCost;
+  }
+
+  inflate();
+}
+
+void CostmapCore::inflate() {
+  const int infl_cells =
+    std::max(1, static_cast<int>(std::ceil(inflation_radius_ / resolution_)));
+  const int cost_step = std::max(1, kOccupiedCost / infl_cells);
+  const int diag_step =
+    std::max(1, static_cast<int>(std::ceil(cost_step * std::sqrt(2.0))));
+
+  // Seed the gradient from every obstacle cell, then relax it outwards.
+  std::vector<int8_t> ring(cells_.size(), 0);
+  for (size_t i = 0; i < cells_.size(); ++i) {
+    if (cells_[i] >= kSeedCost) {
+      ring[i] = kOccupiedCost;
+    }
+  }
+
+  for (int d = 0; d < infl_cells; ++d) {
+    propagateGradient(ring, cost_step, diag_step);
+  }
+
+  for (size_t i = 0; i < cells_.size(); ++i) {
+    if (ring[i] > cells_[i]) {
+      cells_[i] = ring[i];
+    }
   }
 }
 
-void CostmapCore::convertToGrid(double range, double angle, int& x_grid, int& y_grid) {
-  constexpr double kLidarOffsetX = 0.8;
-  const double lx = kLidarOffsetX + range * std::cos(angle);
-  const double ly = range * std::sin(angle);
-  const double cos_yaw = std::cos(robot_yaw_);
-  const double sin_yaw = std::sin(robot_yaw_);
-  const double wx = robot_x_ + lx * cos_yaw - ly * sin_yaw;
-  const double wy = robot_y_ + lx * sin_yaw + ly * cos_yaw;
-  x_grid = static_cast<int>(std::floor((wx - origin_x_) / resolution_));
-  y_grid = static_cast<int>(std::floor((wy - origin_y_) / resolution_));
-}
+void CostmapCore::propagateGradient(std::vector<int8_t>& ring,
+                                    int step, int diag_step) const {
+  // One full forward+backward pass moves the gradient one ring further in
+  // all eight directions. Both straight (step) and diagonal (diag_step)
+  // neighbours are relaxed so the inflated zone is circular, not diamond.
+  const auto relax = [this, &ring, step, diag_step](int y, int x) {
+    const size_t idx = static_cast<size_t>(y) * width_ + x;
+    int best = ring[idx];
 
-void CostmapCore::inflateObstacles() {
-  int inflation_cells = static_cast<int>(std::ceil(inflation_radius_ / resolution_));
+    auto consider = [&best, &ring](size_t n, int s) {
+      best = std::max(best, static_cast<int>(ring[n]) - s);
+    };
+    if (x > 0) {
+      consider(idx - 1, step);
+    }
+    if (x < width_ - 1) {
+      consider(idx + 1, step);
+    }
+    if (y > 0) {
+      consider(idx - static_cast<size_t>(width_), step);
+    }
+    if (y < height_ - 1) {
+      consider(idx + static_cast<size_t>(width_), step);
+    }
+    if (x > 0 && y > 0) {
+      consider(idx - static_cast<size_t>(width_) - 1, diag_step);
+    }
+    if (x < width_ - 1 && y > 0) {
+      consider(idx - static_cast<size_t>(width_) + 1, diag_step);
+    }
+    if (x > 0 && y < height_ - 1) {
+      consider(idx + static_cast<size_t>(width_) - 1, diag_step);
+    }
+    if (x < width_ - 1 && y < height_ - 1) {
+      consider(idx + static_cast<size_t>(width_) + 1, diag_step);
+    }
+
+    if (best < 0) {
+      best = 0;
+    }
+    ring[idx] = static_cast<int8_t>(best);
+  };
+
   for (int y = 0; y < height_; ++y) {
     for (int x = 0; x < width_; ++x) {
-      if (grid_[static_cast<size_t>(y * width_ + x)] != MAX_COST_) {
-        continue;
-      }
-      int min_x = std::max(0, x - inflation_cells);
-      int max_x = std::min(width_ - 1, x + inflation_cells);
-      int min_y = std::max(0, y - inflation_cells);
-      int max_y = std::min(height_ - 1, y + inflation_cells);
-      for (int ny = min_y; ny <= max_y; ++ny) {
-        for (int nx = min_x; nx <= max_x; ++nx) {
-          double dist = std::hypot((nx - x) * resolution_, (ny - y) * resolution_);
-          if (dist >= inflation_radius_) {
-            continue;
-          }
-          int8_t cost = static_cast<int8_t>(MAX_COST_ * (1.0 - dist / inflation_radius_));
-          size_t idx = static_cast<size_t>(ny * width_ + nx);
-          if (cost > grid_[idx]) {
-            grid_[idx] = cost;
-          }
-        }
-      }
+      relax(y, x);
+    }
+  }
+  for (int y = height_ - 1; y >= 0; --y) {
+    for (int x = width_ - 1; x >= 0; --x) {
+      relax(y, x);
     }
   }
 }
 
-nav_msgs::msg::OccupancyGrid CostmapCore::getCostmapMsg() {
+nav_msgs::msg::OccupancyGrid CostmapCore::buildMessage() const {
   nav_msgs::msg::OccupancyGrid msg;
-  msg.header.stamp = rclcpp::Clock().now();
-  msg.header.frame_id = "map";
   msg.info.resolution = resolution_;
   msg.info.width = static_cast<uint32_t>(width_);
   msg.info.height = static_cast<uint32_t>(height_);
   msg.info.origin.position.x = origin_x_;
   msg.info.origin.position.y = origin_y_;
-  msg.info.origin.position.z = 0.0;
   msg.info.origin.orientation.w = 1.0;
-  msg.data = grid_;
+  msg.data = cells_;
   return msg;
 }
 

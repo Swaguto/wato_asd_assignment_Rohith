@@ -10,34 +10,38 @@
 namespace robot
 {
 
+// Builds a fixed grid occupancy map from the lidar scan. The grid lives in
+// the sensor frame (the robot is always at the grid centre), so no robot
+// pose is needed here: map_memory later reprojects the cells into world
+// coordinates using the odometry.
 class CostmapCore {
   public:
-    explicit CostmapCore(const rclcpp::Logger& logger);
+    explicit CostmapCore(rclcpp::Node* node);
 
-    void updateCostmap(const sensor_msgs::msg::LaserScan::SharedPtr scan);
-    void setPose(double x, double y, double yaw);
-    nav_msgs::msg::OccupancyGrid getCostmapMsg();
+    // Processes one laser scan: clears the grid, stamps obstacle hits and
+    // spreads an inflated gradient around each hit.
+    void update(const sensor_msgs::msg::LaserScan& scan);
+
+    // Assembles the current grid into an OccupancyGrid message.
+    nav_msgs::msg::OccupancyGrid buildMessage() const;
 
   private:
+    void readParameters(rclcpp::Node* node);
+    void inflate();
+    void propagateGradient(std::vector<int8_t>& ring, int step, int diag_step) const;
+
     rclcpp::Logger logger_;
+    std::vector<int8_t> cells_;
 
-    std::vector<int8_t> grid_;
-    double resolution_ = 0.1;
-    int width_ = 100;
-    int height_ = 100;
-    double origin_x_ = -5.0;
-    double origin_y_ = -5.0;
-    double robot_x_ = 0.0;
-    double robot_y_ = 0.0;
-    double robot_yaw_ = 0.0;
-    double inflation_radius_ = 1.0;
-    const int8_t MAX_COST_ = 100; 
-
-    void initializeCostmap();
-    void markObstacles(const sensor_msgs::msg::LaserScan& scan);
-    void inflateObstacles();
-    void convertToGrid(double range, double angle, int& x_grid, int& y_grid);
+    double resolution_ = 0.4;         // [m/cell]
+    double inflation_radius_ = 1.5;   // [m]
+    double origin_x_ = -24.0;         // [m] grid bottom-left corner (sensor frame)
+    double origin_y_ = -24.0;
+    int width_ = 120;
+    int height_ = 120;
+    bool configured_ = false;
 };
 
 }
+
 #endif

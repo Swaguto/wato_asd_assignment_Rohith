@@ -1,45 +1,34 @@
 #include <chrono>
-#include <memory>
 
-#include "rclcpp/rclcpp.hpp"
-#include "tf2_msgs/msg/tf_message.hpp"
+#include "tf_throttle_node.hpp"
 
-namespace robot
+TfThrottleNode::TfThrottleNode() : Node("tf_throttle")
 {
+  sub_ = this->create_subscription<tf2_msgs::msg::TFMessage>(
+    "/tf_raw", 10,
+    std::bind(&TfThrottleNode::tfCallback, this, std::placeholders::_1));
+  pub_ = this->create_publisher<tf2_msgs::msg::TFMessage>("/tf", 10);
+  timer_ = this->create_wall_timer(
+    std::chrono::milliseconds(100),
+    std::bind(&TfThrottleNode::timerCallback, this));
+}
 
-class TfThrottleNode : public rclcpp::Node
-{
-public:
-  TfThrottleNode()
-  : Node("tf_throttle")
-  {
-    auto qos = rclcpp::QoS(rclcpp::KeepLast(1));
-    sub_ = this->create_subscription<tf2_msgs::msg::TFMessage>(
-      "/tf_raw", qos,
-      [this](const tf2_msgs::msg::TFMessage::SharedPtr msg) { latest_ = msg; });
-    pub_ = this->create_publisher<tf2_msgs::msg::TFMessage>("/tf", qos);
-    timer_ = this->create_wall_timer(
-      std::chrono::milliseconds(50),
-      [this]() {
-        if (latest_) {
-          pub_->publish(*latest_);
-        }
-      });
+void TfThrottleNode::tfCallback(const tf2_msgs::msg::TFMessage::SharedPtr msg) {
+  latest_ = *msg;
+  received_ = true;
+}
+
+void TfThrottleNode::timerCallback() {
+  if (!received_) {
+    return;
   }
-
-private:
-  rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr sub_;
-  rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr pub_;
-  tf2_msgs::msg::TFMessage::SharedPtr latest_;
-  rclcpp::TimerBase::SharedPtr timer_;
-};
-
+  pub_->publish(latest_);
 }
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<robot::TfThrottleNode>());
+  rclcpp::spin(std::make_shared<TfThrottleNode>());
   rclcpp::shutdown();
   return 0;
 }

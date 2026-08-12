@@ -4,87 +4,112 @@
 
 #include "planner_node.hpp"
 
-namespace
-{
-constexpr double kGoalReachedDist = 0.2;
-}
+PlannerNode::PlannerNode()
+: Node("planner"), core_(robot::PlannerCore(this->get_logger())) {
+  this->declare_parameter("map_topic", "/map");
+  this->declare_parameter("goal_topic", "/goal_point");
+  this->declare_parameter("odom_topic", "/odom/filtered");
+  this->declare_parameter("path_topic", "/path");
+  this->declare_parameter("goal_tolerance", 1.5);
+  this->declare_parameter("plan_timeout_seconds", 60.0);
 
-PlannerNode::PlannerNode() : Node("planner"), planner_(robot::PlannerCore(this->get_logger())) {
+  const std::string map_topic = this->get_parameter("map_topic").as_string();
+  const std::string goal_topic = this->get_parameter("goal_topic").as_string();
+  const std::string odom_topic = this->get_parameter("odom_topic").as_string();
+  const std::string path_topic = this->get_parameter("path_topic").as_string();
+  goal_tolerance_ = this->get_parameter("goal_tolerance").as_double();
+  plan_timeout_s_ = this->get_parameter("plan_timeout_seconds").as_double();
+
   map_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
-    "/map", 10, std::bind(&PlannerNode::mapCallback, this, std::placeholders::_1));
+    map_topic, 10, std::bind(&PlannerNode::mapCallback, this, std::placeholders::_1));
   goal_sub_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
-    "/goal_point", 10, std::bind(&PlannerNode::goalCallback, this, std::placeholders::_1));
-  goal_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-    "/move_base_simple/goal", 10, std::bind(&PlannerNode::goalPoseCallback, this, std::placeholders::_1));
+    goal_topic, 10, std::bind(&PlannerNode::goalCallback, this, std::placeholders::_1));
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    "/odom/filtered", 10, std::bind(&PlannerNode::odomCallback, this, std::placeholders::_1));
-
-  path_pub_ = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
-
-  timer_ = this->create_wall_timer(
-    std::chrono::seconds(4), std::bind(&PlannerNode::timerCallback, this));
+    odom_topic, 10, std::bind(&PlannerNode::odomCallback, this, std::placeholders::_1));
+  path_pub_ = this->create_publisher<nav_msgs::msg::Path>(path_topic, 10);
+  status_timer_ = this->create_wall_timer(
+    std::chrono::milliseconds(500), std::bind(&PlannerNode::statusTimerCallback, this));
 }
 
 void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
   latest_map_ = *msg;
-  map_received_ = true;
+  have_map_ = true;
+  if (goal_active_) {
+    attemptPlan();
+  }
 }
 
 void PlannerNode::goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {
-  latest_goal_ = *msg;
-  goal_received_ = true;
-  goal_reached_ = false;
-  planPath();
-}
-
-void PlannerNode::goalPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
-  latest_goal_.header = msg->header;
-  latest_goal_.point.x = msg->pose.position.x;
-  latest_goal_.point.y = msg->pose.position.y;
-  latest_goal_.point.z = 0.0;
-  goal_received_ = true;
-  goal_reached_ = false;
-  planPath();
+  if (goal_active_) {
+    RCLCPP_WARN(this->get_logger(), "A goal is already active; ignoring (%.2f, %.2f).",
+                msg->point.x, msg->point.y);
+    return;
+  }
+  if (!have_map_) {
+    RCLCPP_WARN(this->get_logger(), "No map yet; cannot plan to (%.2f, %.2f).",
+                msg->point.x, msg->point.y);
+    return;
+  }
+  goal_ = *msg;
+  goal_active_ = true;
+  goal_started_ = this->now();
+  RCLCPP_INFO(this->get_logger(), "New goal: (%.2f, %.2f).", msg->point.x, msg->point.y);
+  attemptPlan();
 }
 
 void PlannerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-  latest_odom_ = *msg;
-  odom_received_ = true;
+  odom_x_ = msg->pose.pose.position.x;
+  odom_y_ = msg->pose.pose.position.y;
+  have_odom_ = true;
 }
 
-void PlannerNode::timerCallback() {
-  if (!goal_reached_ && map_received_ && goal_received_ && odom_received_) {
-    planPath();
+void PlannerNode::statusTimerCallback() {
+  if (!goal_active_) {
+    return;
+  }
+  const double elapsed = (this->now() - goal_started_).seconds();
+  if (elapsed > plan_timeout_s_) {
+    RCLCPP_WARN(this->get_logger(), "Goal timed out after %.1f s; clearing it.", elapsed);
+    clearGoal();
+    return;
+  }
+  if (have_odom_) {
+    const double dist = std::hypot(odom_x_ - goal_.point.x, odom_y_ - goal_.point.y);
+    if (dist < goal_tolerance_) {
+      RCLCPP_INFO(this->get_logger(), "Goal reached (%.2f m away); clearing it.", dist);
+      clearGoal();
+    }
   }
 }
 
-void PlannerNode::planPath() {
-  if (!map_received_ || !goal_received_ || !odom_received_) {
+void PlannerNode::attemptPlan() {
+  if (!have_odom_) {
+    RCLCPP_WARN(this->get_logger(), "No odometry yet; clearing goal.");
+    clearGoal();
     return;
   }
 
-  const double dx = latest_goal_.point.x - latest_odom_.pose.pose.position.x;
-  const double dy = latest_goal_.point.y - latest_odom_.pose.pose.position.y;
-  if (std::hypot(dx, dy) < kGoalReachedDist) {
-    goal_reached_ = true;
-    return;
-  }
-
-  geometry_msgs::msg::PointStamped start;
-  start.header.frame_id = latest_map_.header.frame_id;
-  start.point.x = latest_odom_.pose.pose.position.x;
-  start.point.y = latest_odom_.pose.pose.position.y;
-  start.point.z = 0.0;
-
-  nav_msgs::msg::Path path = planner_.planPath(latest_map_, start, latest_goal_);
+  nav_msgs::msg::Path path;
   path.header.frame_id = latest_map_.header.frame_id;
   path.header.stamp = this->now();
 
-  if (path.poses.empty()) {
-    RCLCPP_WARN(this->get_logger(), "Could not find a path");
+  if (!core_.plan(latest_map_, odom_x_, odom_y_, goal_.point.x, goal_.point.y, path.poses)) {
+    RCLCPP_ERROR(this->get_logger(), "Planning failed; clearing goal.");
+    clearGoal();
     return;
   }
+
   path_pub_->publish(path);
+}
+
+void PlannerNode::clearGoal() {
+  goal_active_ = false;
+
+  // Tell the controller to stop: an empty path.
+  nav_msgs::msg::Path stop_path;
+  stop_path.header.frame_id = have_map_ ? latest_map_.header.frame_id : "sim_world";
+  stop_path.header.stamp = this->now();
+  path_pub_->publish(stop_path);
 }
 
 int main(int argc, char ** argv)
