@@ -20,6 +20,10 @@ class MapMemoryCore {
     void merge(const nav_msgs::msg::OccupancyGrid& local,
                double robot_x, double robot_y, double robot_yaw);
 
+    // Lowers every cell's cost by `amount` so stale observations fade away
+    // unless the next merge refreshes them.
+    void decayCells(int amount);
+
     const nav_msgs::msg::OccupancyGrid& map() const { return map_msg_; }
 
   private:

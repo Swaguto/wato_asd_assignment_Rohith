@@ -9,6 +9,8 @@ map_memory_node:
     map_pub_rate: 3000
     # m, distance travelled by the robot at which the map will update
     update_distance: 1.5
+    # cost units subtracted from unrefreshed cells every publish
+    decay_rate: 6
 
     global_map:
       resolution: 0.5

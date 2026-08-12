@@ -44,6 +44,17 @@ void MapMemoryCore::readParameters(rclcpp::Node* node) {
   origin_y_ = node->get_parameter("global_map.origin.position.y").as_double();
 }
 
+void MapMemoryCore::decayCells(int amount) {
+  if (!initialized_ || amount <= 0) {
+    return;
+  }
+  for (int8_t& value : map_msg_.data) {
+    if (value > 0) {
+      value = static_cast<int8_t>(std::max(0, static_cast<int>(value) - amount));
+    }
+  }
+}
+
 void MapMemoryCore::merge(const nav_msgs::msg::OccupancyGrid& local,
                           double robot_x, double robot_y, double robot_yaw) {
   if (!initialized_) {

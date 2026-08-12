@@ -31,6 +31,7 @@ class MapMemoryNode : public rclcpp::Node {
     double robot_yaw_ = 0.0;
 
     double update_distance_ = 1.5;
+    int decay_rate_ = 4;
     double last_merge_x_ = 0.0;
     double last_merge_y_ = 0.0;
     bool ever_merged_ = false;
