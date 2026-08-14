@@ -11,8 +11,6 @@ map_memory_node:
     update_distance: 1.5
     # s, max age of the map before a forced re-merge (keeps map fresh while idle)
     update_time: 15.0
-    # cost units subtracted from unrefreshed cells every publish
-    decay_rate: 6
 
     global_map:
       resolution: 0.5

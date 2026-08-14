@@ -13,7 +13,6 @@ MapMemoryNode::MapMemoryNode()
   this->declare_parameter("map_pub_rate", 3000);
   this->declare_parameter("update_distance", 1.5);
   this->declare_parameter("update_time", 15.0);
-  this->declare_parameter("decay_rate", 6);
 
   const std::string costmap_topic = this->get_parameter("local_costmap_topic").as_string();
   const std::string odom_topic = this->get_parameter("odom_topic").as_string();
@@ -21,7 +20,6 @@ MapMemoryNode::MapMemoryNode()
   const int map_pub_rate = this->get_parameter("map_pub_rate").as_int();
   update_distance_ = this->get_parameter("update_distance").as_double();
   update_time_ = this->get_parameter("update_time").as_double();
-  decay_rate_ = this->get_parameter("decay_rate").as_int();
 
   costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
     costmap_topic, 10,
@@ -61,7 +59,7 @@ void MapMemoryNode::publishTimerCallback() {
 
   // Like the reference implementation, an all-zero costmap (e.g. a dead
   // lidar) carries no information: skip the merge so existing memory is not
-  // replaced, and freeze the decay so the map cannot be wiped empty.
+  // replaced by it.
   const bool empty_costmap =
     std::all_of(latest_costmap_.data.begin(), latest_costmap_.data.end(),
                 [](int8_t v) { return v == 0; });
@@ -73,14 +71,10 @@ void MapMemoryNode::publishTimerCallback() {
     return;
   }
 
-  // Stale memory fades unless the merge below refreshes it: long sessions
-  // can no longer build an impassable wall out of old obstacle hits.
-  core_.decayCells(decay_rate_);
-
   // Only merge once the robot has travelled far enough from the previous
   // merge point: close-by re-scans add no new information. A time gate
-  // (update_time) still forces merges while the robot idles so the map can
-  // never decay to empty and let the planner plan through unseen walls.
+  // (update_time) still forces merges while the robot idles so the map stays
+  // current even when the robot is standing still.
   bool should_merge = !ever_merged_;
   if (ever_merged_) {
     const double travelled = std::hypot(robot_x_ - last_merge_x_, robot_y_ - last_merge_y_);

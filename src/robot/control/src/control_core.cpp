@@ -52,8 +52,15 @@ geometry_msgs::msg::Twist ControlCore::step(double robot_x, double robot_y,
   double steering = wrapAngle(heading_to_target - robot_yaw);
 
   if (std::abs(steering) > max_steering_angle_) {
-    // Turning sharply; pushing forward would swing the robot into things.
-    twist.linear.x = 0.0;
+    // Keep turning toward the path instead of freezing: the target is at most
+    // 90 deg off (it was picked from the forward half-plane), so creep ahead
+    // slowly to make progress, and turn in place only when the path is
+    // effectively behind the robot.
+    if (std::abs(steering) < kPi / 2.0) {
+      twist.linear.x = 0.3 * linear_velocity_;
+    } else {
+      twist.linear.x = 0.0;
+    }
   } else {
     twist.linear.x = linear_velocity_;
   }
