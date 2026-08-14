@@ -1,184 +1,115 @@
+#include <chrono>
+#include <cmath>
+#include <memory>
+
 #include "planner_node.hpp"
 
-PlannerNode::PlannerNode() : Node("planner"), planner_(robot::PlannerCore(this->get_logger())) {
-  // load ROS2 yaml parameters
-  processParameters();
+PlannerNode::PlannerNode()
+: Node("planner"), core_(robot::PlannerCore(this->get_logger())) {
+  this->declare_parameter("map_topic", "/map");
+  this->declare_parameter("goal_topic", "/goal_point");
+  this->declare_parameter("odom_topic", "/odom/filtered");
+  this->declare_parameter("path_topic", "/path");
+  this->declare_parameter("goal_tolerance", 1.5);
+  this->declare_parameter("plan_timeout_seconds", 60.0);
 
-  // Subscribers
-  map_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
-    map_topic_,
-    10,
-    std::bind(&PlannerNode::mapCallback, this, std::placeholders::_1)
-  );
-
-  goal_sub_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
-    goal_topic_,
-    10,
-    std::bind(&PlannerNode::goalCallback, this, std::placeholders::_1)
-  );
-
-  // Subscribe to odometry from /odom/filtered
-  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    odom_topic_,
-    10,
-    std::bind(&PlannerNode::odomCallback, this, std::placeholders::_1)
-  );
-
-  // Publisher
-  path_pub_ = this->create_publisher<nav_msgs::msg::Path>(path_topic_, 10);
-
-  // Timer to check goal/timeout status periodically (500 ms)
-  timer_ = this->create_wall_timer(
-    std::chrono::milliseconds(500),
-    std::bind(&PlannerNode::timerCallback, this)
-  );
-
-  planner_.initPlanner(smoothing_factor_, iterations_);
-}
-
-void PlannerNode::processParameters() {
-  // Declare and get parameters
-  this->declare_parameter<std::string>("map_topic", "/map");
-  this->declare_parameter<std::string>("goal_topic", "/goal_pose");
-  this->declare_parameter<std::string>("odom_topic", "/odom/filtered");
-  this->declare_parameter<std::string>("path_topic", "/path");
-  this->declare_parameter<double>("smoothing_factor", 0.2);
-  this->declare_parameter<int>("iterations", 20);
-  this->declare_parameter<double>("goal_tolerance", 0.3);
-  this->declare_parameter<double>("plan_timeout_seconds", 10.0);
-
-  map_topic_ = this->get_parameter("map_topic").as_string();
-  goal_topic_ = this->get_parameter("goal_topic").as_string();
-  odom_topic_ = this->get_parameter("odom_topic").as_string();
-  path_topic_ = this->get_parameter("path_topic").as_string();
-  smoothing_factor_ = this->get_parameter("smoothing_factor").as_double();
-  iterations_ = this->get_parameter("iterations").as_int();
+  const std::string map_topic = this->get_parameter("map_topic").as_string();
+  const std::string goal_topic = this->get_parameter("goal_topic").as_string();
+  const std::string odom_topic = this->get_parameter("odom_topic").as_string();
+  const std::string path_topic = this->get_parameter("path_topic").as_string();
   goal_tolerance_ = this->get_parameter("goal_tolerance").as_double();
-  plan_timeout_ = this->get_parameter("plan_timeout_seconds").as_double();
+  plan_timeout_s_ = this->get_parameter("plan_timeout_seconds").as_double();
+
+  map_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    map_topic, 10, std::bind(&PlannerNode::mapCallback, this, std::placeholders::_1));
+  goal_sub_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
+    goal_topic, 10, std::bind(&PlannerNode::goalCallback, this, std::placeholders::_1));
+  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+    odom_topic, 10, std::bind(&PlannerNode::odomCallback, this, std::placeholders::_1));
+  path_pub_ = this->create_publisher<nav_msgs::msg::Path>(path_topic, 10);
+  status_timer_ = this->create_wall_timer(
+    std::chrono::milliseconds(500), std::bind(&PlannerNode::statusTimerCallback, this));
 }
 
-void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
-{
-  {
-    std::lock_guard<std::mutex> lock(map_mutex_);
-    map_ = msg;
-  }
-
-  // If we have an active goal, re-run plan
-  if (active_goal_) {
-    double elapsed = (now() - plan_start_time_).seconds();
-    if (elapsed <= plan_timeout_) {
-      RCLCPP_INFO(this->get_logger(), 
-                  "Map updated => Replanning for current goal (time elapsed: %.2f).",
-                  elapsed);
-      publishPath();
-    }
+void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+  latest_map_ = *msg;
+  have_map_ = true;
+  if (goal_active_) {
+    attemptPlan();
   }
 }
 
-void PlannerNode::goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr goal_msg)
-{
-  if (active_goal_) {
-    RCLCPP_WARN(this->get_logger(), "Ignoring new goal; a goal is already active.");
+void PlannerNode::goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {
+  if (goal_active_) {
+    RCLCPP_WARN(this->get_logger(), "A goal is already active; ignoring (%.2f, %.2f).",
+                msg->point.x, msg->point.y);
     return;
   }
-
-  if (!map_) {
-    RCLCPP_WARN(this->get_logger(), "No costmap available yet. Cannot set goal.");
+  if (!have_map_) {
+    RCLCPP_WARN(this->get_logger(), "No map yet; cannot plan to (%.2f, %.2f).",
+                msg->point.x, msg->point.y);
     return;
   }
-
-  current_goal_ = *goal_msg;
-  active_goal_ = true;
-  plan_start_time_ = now();
-
-  RCLCPP_INFO(this->get_logger(), "Received new goal: (%.2f, %.2f)",
-              goal_msg->point.x, goal_msg->point.y);
-
-  publishPath();
+  goal_ = *msg;
+  goal_active_ = true;
+  goal_started_ = this->now();
+  RCLCPP_INFO(this->get_logger(), "New goal: (%.2f, %.2f).", msg->point.x, msg->point.y);
+  attemptPlan();
 }
 
-void PlannerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr odom_msg)
-{
-  // Store the latest odometry in (odom_x_, odom_y_)
-  // For simplicity, ignoring orientation or z
-  odom_x_ = odom_msg->pose.pose.position.x;
-  odom_y_ = odom_msg->pose.pose.position.y;
+void PlannerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+  odom_x_ = msg->pose.pose.position.x;
+  odom_y_ = msg->pose.pose.position.y;
   have_odom_ = true;
 }
 
-void PlannerNode::timerCallback()
-{
-  if (!active_goal_) {
+void PlannerNode::statusTimerCallback() {
+  if (!goal_active_) {
     return;
   }
-
-  // Check if we've timed out
-  double elapsed = (now() - plan_start_time_).seconds();
-  if (elapsed > plan_timeout_) {
-    RCLCPP_WARN(this->get_logger(), "Plan timed out after %.2f seconds. Resetting goal.", elapsed);
-    resetGoal();
+  const double elapsed = (this->now() - goal_started_).seconds();
+  if (elapsed > plan_timeout_s_) {
+    RCLCPP_WARN(this->get_logger(), "Goal timed out after %.1f s; clearing it.", elapsed);
+    clearGoal();
     return;
   }
-
-  // Check if we reached the goal
-  double distance = sqrt(pow(odom_x_ - current_goal_.point.x, 2) +  pow(odom_y_ - current_goal_.point.y, 2));
-  if (distance < goal_tolerance_) {
-    RCLCPP_WARN(this->get_logger(), "Plan succeeded! Elapsed Time: %.2f", elapsed);
-    resetGoal();
-    return;
+  if (have_odom_) {
+    const double dist = std::hypot(odom_x_ - goal_.point.x, odom_y_ - goal_.point.y);
+    if (dist < goal_tolerance_) {
+      RCLCPP_INFO(this->get_logger(), "Goal reached (%.2f m away); clearing it.", dist);
+      clearGoal();
+    }
   }
 }
 
-void PlannerNode::publishPath() {
+void PlannerNode::attemptPlan() {
   if (!have_odom_) {
-    RCLCPP_WARN(this->get_logger(), "No odometry received yet. Cannot plan.");
-    resetGoal();
+    RCLCPP_WARN(this->get_logger(), "No odometry yet; clearing goal.");
+    clearGoal();
     return;
   }
 
-  // Use the robot's odometry as the start pose
-  double start_world_x = odom_x_;
-  double start_world_y = odom_y_;
+  nav_msgs::msg::Path path;
+  path.header.frame_id = latest_map_.header.frame_id;
+  path.header.stamp = this->now();
 
-  {
-    std::lock_guard<std::mutex> lock(map_mutex_);
-    if(!planner_.planPath(start_world_x, start_world_y, current_goal_.point.x, current_goal_.point.y, map_)) {
-      RCLCPP_ERROR(this->get_logger(), "Plan Failed.");
-      resetGoal();
-      return;
-    }
+  if (!core_.plan(latest_map_, odom_x_, odom_y_, goal_.point.x, goal_.point.y, path.poses)) {
+    RCLCPP_ERROR(this->get_logger(), "Planning failed; clearing goal.");
+    clearGoal();
+    return;
   }
 
-  nav_msgs::msg::Path path_msg = *planner_.getPath();
-  path_msg.header.stamp = this->now();
-  path_msg.header.frame_id = map_->header.frame_id;
-  
-  path_pub_->publish(path_msg);
+  path_pub_->publish(path);
 }
 
-void PlannerNode::resetGoal() {
-  active_goal_ = false;
-  RCLCPP_INFO(this->get_logger(), "Resetting active goal.");
+void PlannerNode::clearGoal() {
+  goal_active_ = false;
 
-  // Publish an empty path, which should tell the robot to stop or have no path
-  nav_msgs::msg::Path empty_path;
-  empty_path.header.stamp = this->now();
-
-  // Use the costmap frame if available; otherwise a default like "sim_world"
-  {
-    std::lock_guard<std::mutex> lock(map_mutex_);
-    if (map_) {
-      empty_path.header.frame_id = map_->header.frame_id;
-    } else {
-      empty_path.header.frame_id = "sim_world";
-    }
-  }
-  
-  // Publish the empty path
-  path_pub_->publish(empty_path);
-
-  RCLCPP_INFO(this->get_logger(), "Published empty path to stop the robot.");
+  // Tell the controller to stop: an empty path.
+  nav_msgs::msg::Path stop_path;
+  stop_path.header.frame_id = have_map_ ? latest_map_.header.frame_id : "sim_world";
+  stop_path.header.stamp = this->now();
+  path_pub_->publish(stop_path);
 }
 
 int main(int argc, char ** argv)

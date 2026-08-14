@@ -1,135 +1,103 @@
-#include "tf2/LinearMath/Quaternion.h"
-#include "tf2/LinearMath/Matrix3x3.h"
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <memory>
 
 #include "map_memory_node.hpp"
 
-MapMemoryNode::MapMemoryNode() : Node("map_memory"), map_memory_(robot::MapMemoryCore(this->get_logger())) {
-  // load ROS2 yaml parameters
-  processParameters();
+MapMemoryNode::MapMemoryNode()
+: Node("map_memory"), core_(robot::MapMemoryCore(this)) {
+  this->declare_parameter("local_costmap_topic", "/costmap");
+  this->declare_parameter("odom_topic", "/odom/filtered");
+  this->declare_parameter("map_topic", "/map");
+  this->declare_parameter("map_pub_rate", 3000);
+  this->declare_parameter("update_distance", 1.5);
+  this->declare_parameter("update_time", 15.0);
+  this->declare_parameter("decay_rate", 6);
 
-  // Subscribe to local costmap
-  local_costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
-    local_costmap_topic_,
-    10,
-    std::bind(&MapMemoryNode::localCostmapCallback, this, std::placeholders::_1)
-  );
-
-  // Subscribe to odometry
-  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    odom_topic_,
-    10,
-    std::bind(&MapMemoryNode::odomCallback, this, std::placeholders::_1)
-  );
-
-  // Publish a global costmap for downstream path planning
-  global_costmap_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
-    map_topic_,
-    10
-  );
-
-  timer_ = this->create_wall_timer(
-    std::chrono::milliseconds(map_pub_rate_),
-    std::bind(&MapMemoryNode::timerCallback, this)
-  );
-
-  map_memory_.initMapMemory(
-    resolution_, 
-    width_, 
-    height_, 
-    origin_
-  );
-
-  RCLCPP_INFO(this->get_logger(), "Initialized Map Memory Core");
-}
-
-void MapMemoryNode::processParameters() {
-  // Declare all ROS2 Parameters
-  this->declare_parameter<std::string>("local_costmap_topic", "/costmap");
-  this->declare_parameter<std::string>("odom_topic", "/odom/filtered");
-  this->declare_parameter<std::string>("map_topic", "/map");
-  this->declare_parameter<int>("map_pub_rate", 500);
-  this->declare_parameter<double>("update_distance", 1.0);
-  this->declare_parameter<double>("global_map.resolution", 0.1);
-  this->declare_parameter<int>("global_map.width", 100);
-  this->declare_parameter<int>("global_map.height", 100);
-  this->declare_parameter<double>("global_map.origin.position.x", -5.0);
-  this->declare_parameter<double>("global_map.origin.position.y", -5.0);
-  this->declare_parameter<double>("global_map.origin.orientation.w", 1.0);
-
-  // Retrieve parameters and store them in member variables
-  local_costmap_topic_ = this->get_parameter("local_costmap_topic").as_string();
-  odom_topic_ = this->get_parameter("odom_topic").as_string();
-  map_topic_ = this->get_parameter("map_topic").as_string();
-  map_pub_rate_ = this->get_parameter("map_pub_rate").as_int();
+  const std::string costmap_topic = this->get_parameter("local_costmap_topic").as_string();
+  const std::string odom_topic = this->get_parameter("odom_topic").as_string();
+  const std::string map_topic = this->get_parameter("map_topic").as_string();
+  const int map_pub_rate = this->get_parameter("map_pub_rate").as_int();
   update_distance_ = this->get_parameter("update_distance").as_double();
-  resolution_ = this->get_parameter("global_map.resolution").as_double();
-  width_ = this->get_parameter("global_map.width").as_int();
-  height_ = this->get_parameter("global_map.height").as_int();
-  origin_.position.x = this->get_parameter("global_map.origin.position.x").as_double();
-  origin_.position.y = this->get_parameter("global_map.origin.position.y").as_double();
-  origin_.orientation.w = this->get_parameter("global_map.origin.orientation.w").as_double();
+  update_time_ = this->get_parameter("update_time").as_double();
+  decay_rate_ = this->get_parameter("decay_rate").as_int();
+
+  costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    costmap_topic, 10,
+    std::bind(&MapMemoryNode::costmapCallback, this, std::placeholders::_1));
+  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+    odom_topic, 10,
+    std::bind(&MapMemoryNode::odomCallback, this, std::placeholders::_1));
+  map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(map_topic, 10);
+  publish_timer_ = this->create_wall_timer(
+    std::chrono::milliseconds(map_pub_rate),
+    std::bind(&MapMemoryNode::publishTimerCallback, this));
 }
 
-void MapMemoryNode::localCostmapCallback(
-  const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
-
-  bool all_zero = std::all_of(msg->data.begin(), msg->data.end(),
-                            [](int8_t val) { return val == 0; });
-  if (all_zero) {
-    RCLCPP_INFO(this->get_logger(), "All elements in the array are zero.");
-    return;
-  }
-
-  // Check how far the robot has moved since last update
-  if (!std::isnan(last_robot_x_))
-  {
-    double dist = std::hypot(robot_x_ - last_robot_x_, robot_y_ - last_robot_y_);
-    if (dist < update_distance_)
-    {
-      // Robot hasn’t moved enough, skip updating the global map
-      return;
-    }
-  }
-
-  // Update last position
-  last_robot_x_ = robot_x_;
-  last_robot_y_ = robot_y_;
-
-  // Update the global map
-  map_memory_.updateMap(msg, robot_x_, robot_y_, robot_theta_);
+void MapMemoryNode::costmapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+  latest_costmap_ = *msg;
+  have_costmap_ = true;
 }
 
 void MapMemoryNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-  // Extract the robot’s position and orientation from the Odometry message.
-  // Assume this odometry is in the "sim_world" frame or a frame equivalent to it.
   robot_x_ = msg->pose.pose.position.x;
   robot_y_ = msg->pose.pose.position.y;
-
-  // Convert quaternion to yaw
-  double qx = msg->pose.pose.orientation.x;
-  double qy = msg->pose.pose.orientation.y;
-  double qz = msg->pose.pose.orientation.z;
-  double qw = msg->pose.pose.orientation.w;
-  robot_theta_ = quaternionToYaw(qx, qy, qz, qw);
+  robot_yaw_ = quaternionToYaw(msg->pose.pose.orientation);
+  have_odom_ = true;
 }
 
-void MapMemoryNode::timerCallback() {
-  // Publish the map every map_pub_rate [ms]
-  nav_msgs::msg::OccupancyGrid map_msg = *map_memory_.getMapData();
-  map_msg.header.stamp = this->now();
-  map_msg.header.frame_id = "sim_world";
-  global_costmap_pub_->publish(map_msg);
+double MapMemoryNode::quaternionToYaw(const geometry_msgs::msg::Quaternion& q) {
+  return std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                    1.0 - 2.0 * (q.y * q.y + q.z * q.z));
 }
 
-// Utility: Convert quaternion to yaw
-double MapMemoryNode::quaternionToYaw(double x, double y, double z, double w)
-{
-  // Using tf2 to convert to RPY
-  tf2::Quaternion q(x, y, z, w);
-  tf2::Matrix3x3 m(q);
-  double roll, pitch, yaw;
-  m.getRPY(roll, pitch, yaw);
-  return yaw;
+void MapMemoryNode::publishTimerCallback() {
+  if (!have_costmap_ || !have_odom_) {
+    return;
+  }
+
+  const rclcpp::Time now = this->now();
+
+  // Like the reference implementation, an all-zero costmap (e.g. a dead
+  // lidar) carries no information: skip the merge so existing memory is not
+  // replaced, and freeze the decay so the map cannot be wiped empty.
+  const bool empty_costmap =
+    std::all_of(latest_costmap_.data.begin(), latest_costmap_.data.end(),
+                [](int8_t v) { return v == 0; });
+  if (empty_costmap) {
+    // Publish the existing map unchanged.
+    nav_msgs::msg::OccupancyGrid out = core_.map();
+    out.header.stamp = now;
+    map_pub_->publish(out);
+    return;
+  }
+
+  // Stale memory fades unless the merge below refreshes it: long sessions
+  // can no longer build an impassable wall out of old obstacle hits.
+  core_.decayCells(decay_rate_);
+
+  // Only merge once the robot has travelled far enough from the previous
+  // merge point: close-by re-scans add no new information. A time gate
+  // (update_time) still forces merges while the robot idles so the map can
+  // never decay to empty and let the planner plan through unseen walls.
+  bool should_merge = !ever_merged_;
+  if (ever_merged_) {
+    const double travelled = std::hypot(robot_x_ - last_merge_x_, robot_y_ - last_merge_y_);
+    const double since_merge = (now - last_merge_time_).seconds();
+    should_merge = travelled >= update_distance_ || since_merge >= update_time_;
+  }
+  if (should_merge) {
+    core_.merge(latest_costmap_, robot_x_, robot_y_, robot_yaw_);
+    last_merge_x_ = robot_x_;
+    last_merge_y_ = robot_y_;
+    last_merge_time_ = now;
+    ever_merged_ = true;
+  }
+
+  nav_msgs::msg::OccupancyGrid out = core_.map();
+  out.header.stamp = this->now();
+  map_pub_->publish(out);
 }
 
 int main(int argc, char ** argv)

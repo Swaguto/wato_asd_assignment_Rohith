@@ -1,46 +1,46 @@
 #ifndef COSTMAP_CORE_HPP_
 #define COSTMAP_CORE_HPP_
 
+#include <vector>
+
 #include "rclcpp/rclcpp.hpp"
-#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 
 namespace robot
 {
 
+// Builds a fixed grid occupancy map from the lidar scan. The grid lives in
+// the sensor frame (the robot is always at the grid centre), so no robot
+// pose is needed here: map_memory later reprojects the cells into world
+// coordinates using the odometry.
 class CostmapCore {
   public:
-    // Constructor, we pass in the node's RCLCPP logger to enable logging to terminal
-    explicit CostmapCore(const rclcpp::Logger& logger);
+    explicit CostmapCore(rclcpp::Node* node);
 
-    // Initializes the Costmap with the parameters that we get from the params.yaml
-    void initCostmap(
-      double resolution, 
-      int width, 
-      int height, 
-      geometry_msgs::msg::Pose origin, 
-      double inflation_radius
-      );
+    // Processes one laser scan: clears the grid, stamps obstacle hits and
+    // spreads an inflated gradient around each hit.
+    void update(const sensor_msgs::msg::LaserScan& scan);
 
-    // Update the costmap based on the current laserscan reading
-    void updateCostmap(const sensor_msgs::msg::LaserScan::SharedPtr laserscan) const;
-
-    // Inflate the obstacle in the laserscan on the costmap because we want of range of values
-    // where we can and cannot go
-    void inflateObstacle(int origin_x, int origin_y) const;
-
-    // Retrieves costmap data
-    nav_msgs::msg::OccupancyGrid::SharedPtr getCostmapData() const;
+    // Assembles the current grid into an OccupancyGrid message.
+    nav_msgs::msg::OccupancyGrid buildMessage() const;
 
   private:
-    nav_msgs::msg::OccupancyGrid::SharedPtr costmap_data_;
+    void readParameters(rclcpp::Node* node);
+    void inflate();
+
     rclcpp::Logger logger_;
+    std::vector<int8_t> cells_;
 
-    double inflation_radius_;
-    int inflation_cells_;
-
+    double resolution_ = 0.4;         // [m/cell]
+    double inflation_radius_ = 1.5;   // [m]
+    double origin_x_ = -24.0;         // [m] grid bottom-left corner (sensor frame)
+    double origin_y_ = -24.0;
+    int width_ = 120;
+    int height_ = 120;
+    bool configured_ = false;
 };
 
-}  
+}
 
-#endif  
+#endif

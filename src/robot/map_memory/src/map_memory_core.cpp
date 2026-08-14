@@ -1,110 +1,101 @@
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+
 #include "map_memory_core.hpp"
 
 namespace robot
 {
 
-MapMemoryCore::MapMemoryCore(const rclcpp::Logger& logger) 
-  : global_map_(std::make_shared<nav_msgs::msg::OccupancyGrid>()), logger_(logger) {}
+MapMemoryCore::MapMemoryCore(rclcpp::Node* node)
+: logger_(node != nullptr ? node->get_logger()
+                          : rclcpp::get_logger("map_memory_core"))
+{
+  if (node == nullptr) {
+    return;
+  }
+  readParameters(node);
 
-void MapMemoryCore::initMapMemory(
-  double resolution, 
-  int width, 
-  int height, 
-  geometry_msgs::msg::Pose origin
-) {
-  global_map_->info.resolution = resolution;
-  global_map_->info.width = width;
-  global_map_->info.height = height;
-  global_map_->info.origin = origin;
-  global_map_->data.assign(width * height, 0);
+  map_msg_.header.frame_id = "sim_world";
+  map_msg_.info.resolution = resolution_;
+  map_msg_.info.width = static_cast<uint32_t>(width_);
+  map_msg_.info.height = static_cast<uint32_t>(height_);
+  map_msg_.info.origin.position.x = origin_x_;
+  map_msg_.info.origin.position.y = origin_y_;
+  map_msg_.info.origin.orientation.w = 1.0;
+  map_msg_.data.assign(static_cast<size_t>(width_) * height_, 0);
 
-  RCLCPP_INFO(logger_, "Global Map initialized with resolution: %.2f, width: %d, height: %d", resolution, width, height);
+  initialized_ = true;
+  RCLCPP_INFO(logger_, "global map ready: %dx%d cells @ %.2f m, origin (%.2f, %.2f)",
+              width_, height_, resolution_, origin_x_, origin_y_);
 }
 
-void MapMemoryCore::updateMap(
-  nav_msgs::msg::OccupancyGrid::SharedPtr local_costmap,
-  double robot_x, double robot_y, double robot_theta
-) {
-  // Get local costmap specs
-  double local_res = local_costmap->info.resolution;
-  double local_origin_x = local_costmap->info.origin.position.x;
-  double local_origin_y = local_costmap->info.origin.position.y;
-  unsigned int local_w = local_costmap->info.width;
-  unsigned int local_h = local_costmap->info.height;
-  const auto & local_data = local_costmap->data;
+void MapMemoryCore::readParameters(rclcpp::Node* node) {
+  node->declare_parameter("global_map.resolution", 0.5);
+  node->declare_parameter("global_map.width", 60);
+  node->declare_parameter("global_map.height", 60);
+  node->declare_parameter("global_map.origin.position.x", -15.0);
+  node->declare_parameter("global_map.origin.position.y", -15.0);
 
-  // For each cell in local costmap, transform to sim_world
-  for (unsigned int j = 0; j < local_h; ++j)
-  {
-    for (unsigned int i = 0; i < local_w; ++i)
-    {
-      int8_t occ_val = local_data[j * local_w + i];
-      if (occ_val < 0) {
-        // Unknown => skip or handle differently
-        continue;
-      }
-      // Convert (i,j) to local metric coords relative to "robot" frame
-      double lx = local_origin_x + (i + 0.5) * local_res; // center of cell
-      double ly = local_origin_y + (j + 0.5) * local_res;
+  resolution_ = node->get_parameter("global_map.resolution").as_double();
+  width_ = node->get_parameter("global_map.width").as_int();
+  height_ = node->get_parameter("global_map.height").as_int();
+  origin_x_ = node->get_parameter("global_map.origin.position.x").as_double();
+  origin_y_ = node->get_parameter("global_map.origin.position.y").as_double();
+}
 
-      // Now transform (lx, ly) from "robot" frame to "sim_world" frame
-      // using the robot pose (robot_x_, robot_y_, robot_theta_).
-      // Basic 2D transform:
-      //   wx = robot_x + cos(theta)*lx - sin(theta)*ly
-      //   wy = robot_y + sin(theta)*lx + cos(theta)*ly
-      double cos_t = std::cos(robot_theta);
-      double sin_t = std::sin(robot_theta);
-      double wx = robot_x + (lx * cos_t - ly * sin_t);
-      double wy = robot_y + (lx * sin_t + ly * cos_t);
-
-      // Convert (wx, wy) to indices in the global map
-      int gx, gy;
-      if (!robotToMap(wx, wy, gx, gy)) {
-        // Out of global map bounds
-        continue;
-      }
-
-      // --- Take the max cost instead of direct overwrite ---
-      int8_t &global_val = global_map_->data[gy * global_map_->info.width + gx];
-      
-      // If the global cell is unknown (-1), treat that as 0 when taking max.
-      int current_global_cost = (global_val < 0) ? 0 : global_val; 
-      int local_cost = static_cast<int>(occ_val);
-
-      // Merge by taking the maximum:
-      int merged_cost = std::max(current_global_cost, local_cost);
-
-      // If merged_cost is still 0 but occ_val is not, it means local cost was 0 or unknown
-      // In that case, we might want to handle it differently; for simple max, we just do this:
-      global_val = static_cast<int8_t>(merged_cost);
+void MapMemoryCore::decayCells(int amount) {
+  if (!initialized_ || amount <= 0) {
+    return;
+  }
+  for (int8_t& value : map_msg_.data) {
+    if (value > 0) {
+      value = static_cast<int8_t>(std::max(0, static_cast<int>(value) - amount));
     }
   }
 }
 
-bool MapMemoryCore::robotToMap(double rx, double ry, int& mx, int& my) {
-  double origin_x = global_map_->info.origin.position.x;
-  double origin_y = global_map_->info.origin.position.y;
-  double resolution = global_map_->info.resolution;
-
-  // offset from origin
-  if (rx < origin_x || ry < origin_y) {
-    return false;
+void MapMemoryCore::merge(const nav_msgs::msg::OccupancyGrid& local,
+                          double robot_x, double robot_y, double robot_yaw) {
+  if (!initialized_) {
+    return;
   }
 
-  my = static_cast<int>((ry - origin_y) / resolution);
-  mx = static_cast<int>((rx - origin_x) / resolution);
+  const double cos_yaw = std::cos(robot_yaw);
+  const double sin_yaw = std::sin(robot_yaw);
+  const double local_res = local.info.resolution;
+  const int local_width = static_cast<int>(local.info.width);
+  const int local_height = static_cast<int>(local.info.height);
+  const double local_ox = local.info.origin.position.x;
+  const double local_oy = local.info.origin.position.y;
+  const int global_width = static_cast<int>(map_msg_.info.width);
+  const int global_height = static_cast<int>(map_msg_.info.height);
 
-  if (mx < 0 || mx >= static_cast<int>(global_map_->info.width) ||
-      my < 0 || my >= static_cast<int>(global_map_->info.height))
-  {
-    return false;
+  for (int j = 0; j < local_height; ++j) {
+    for (int i = 0; i < local_width; ++i) {
+      const int8_t value = local.data[static_cast<size_t>(j) * local_width + i];
+      if (value < 0) {
+        // Never seen: leave the memory alone.
+        continue;
+      }
+
+      // Cell centre in the sensor frame...
+      const double lx = local_ox + (static_cast<double>(i) + 0.5) * local_res;
+      const double ly = local_oy + (static_cast<double>(j) + 0.5) * local_res;
+      // ...then rigid transform into the world frame.
+      const double wx = robot_x + lx * cos_yaw - ly * sin_yaw;
+      const double wy = robot_y + lx * sin_yaw + ly * cos_yaw;
+
+      const int gx = static_cast<int>(std::floor((wx - origin_x_) / resolution_));
+      const int gy = static_cast<int>(std::floor((wy - origin_y_) / resolution_));
+      if (gx < 0 || gx >= global_width || gy < 0 || gy >= global_height) {
+        continue;
+      }
+
+      int8_t& stored = map_msg_.data[static_cast<size_t>(gy) * global_width + gx];
+      stored = std::max(stored, value);
+    }
   }
-  return true;
 }
 
-// Retrieves map data
-nav_msgs::msg::OccupancyGrid::SharedPtr MapMemoryCore::getMapData() const {
-  return global_map_;
 }
-
-} 
