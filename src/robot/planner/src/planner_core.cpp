@@ -117,6 +117,8 @@ bool PlannerCore::plan(const nav_msgs::msg::OccupancyGrid& map,
   }
   std::reverse(cells.begin(), cells.end());
 
+  lineOfSightShortcut(map, cells);
+
   const double res = map.info.resolution;
   for (const Cell& cell : cells) {
     geometry_msgs::msg::PoseStamped pose;
@@ -154,6 +156,57 @@ double PlannerCore::stepCost(const Cell& from, const Cell& to) {
   const int dx = std::abs(from.x - to.x);
   const int dy = std::abs(from.y - to.y);
   return (dx == 1 && dy == 1) ? std::sqrt(2.0) : 1.0;
+}
+
+void PlannerCore::lineOfSightShortcut(const nav_msgs::msg::OccupancyGrid& map,
+                                      std::vector<Cell>& cells) const {
+  // Replaces the stair-step A* cell chain with a polyline that skips every
+  // intermediate cell whose centre has a clear line of sight to the next
+  // waypoint: the pursued path becomes long smooth diagonals.
+  if (cells.size() <= 2) {
+    return;
+  }
+
+  std::vector<Cell> out;
+  out.push_back(cells.front());
+  size_t i = 0;
+  while (i < cells.size() - 1) {
+    size_t j = cells.size() - 1;
+    while (j > i + 1 && !hasLineOfSight(map, cells[i], cells[j])) {
+      --j;
+    }
+    out.push_back(cells[j]);
+    i = j;
+  }
+  cells.swap(out);
+}
+
+bool PlannerCore::hasLineOfSight(const nav_msgs::msg::OccupancyGrid& map,
+                                 const Cell& from, const Cell& to) const {
+  // Bresenham between cell centres; every cell crossed must be traversable.
+  int x0 = from.x, y0 = from.y;
+  const int x1 = to.x, y1 = to.y;
+  const int dx = std::abs(x1 - x0), dy = -std::abs(y1 - y0);
+  const int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  int err = dx + dy;
+
+  while (true) {
+    if (cellCost(map, Cell{x0, y0}) > kBlockedCost) {
+      return false;
+    }
+    if (x0 == x1 && y0 == y1) {
+      return true;
+    }
+    const int e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x0 += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y0 += sy;
+    }
+  }
 }
 
 }

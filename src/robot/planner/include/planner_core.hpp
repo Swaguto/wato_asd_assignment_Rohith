@@ -40,6 +40,8 @@ class PlannerCore {
     static int8_t cellCost(const nav_msgs::msg::OccupancyGrid& map, const Cell& cell);
     static double heuristic(const Cell& a, const Cell& b);
     static double stepCost(const Cell& from, const Cell& to);
+    void lineOfSightShortcut(const nav_msgs::msg::OccupancyGrid& map, std::vector<Cell>& cells) const;
+    bool hasLineOfSight(const nav_msgs::msg::OccupancyGrid& map, const Cell& from, const Cell& to) const;
 
     rclcpp::Logger logger_;
 };
