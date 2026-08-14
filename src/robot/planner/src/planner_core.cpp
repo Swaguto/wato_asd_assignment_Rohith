@@ -250,15 +250,21 @@ bool PlannerCore::hasLineOfSight(const nav_msgs::msg::OccupancyGrid& map,
     if (x0 == x1 && y0 == y1) {
       return true;
     }
-    const int e2 = 2 * err;
-    if (e2 >= dy) {
-      err += dy;
-      x0 += sx;
-    }
-    if (e2 <= dx) {
-      err += dx;
-      y0 += sy;
-    }
+const int e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        x0 += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y0 += sy;
+      }
+      // The crossing cells may be traversable yet sit deep in an inflated
+      // ring: the robot pushes through such corridors while scraping the
+      // wall. Only shortcut when the band stays clear of half-inflation.
+      if (cellCost(map, Cell{x0, y0}) >= 50) {
+        return false;
+      }
   }
 }
 

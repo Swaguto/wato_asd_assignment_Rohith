@@ -78,7 +78,13 @@ void PlannerNode::statusTimerCallback() {
     if (dist < goal_tolerance_) {
       RCLCPP_INFO(this->get_logger(), "Goal reached (%.2f m away); clearing it.", dist);
       clearGoal();
+      return;
     }
+  }
+  // Refresh the path at 2 Hz even when the map has not changed: the robot
+  // outruns the old plan between map updates and would overshoot corners.
+  if (have_map_ && have_odom_) {
+    attemptPlan();
   }
 }
 
@@ -94,8 +100,11 @@ void PlannerNode::attemptPlan() {
   path.header.stamp = this->now();
 
   if (!core_.plan(latest_map_, odom_x_, odom_y_, goal_.point.x, goal_.point.y, path.poses)) {
-    RCLCPP_ERROR(this->get_logger(), "Planning failed; clearing goal.");
-    clearGoal();
+    // Layouts and discovered walls change while driving: a plan that is
+    // impossible now may become possible after the next map merge. Keep the
+    // goal active and retry on the next status tick instead of giving up.
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                         "Planning failed; retrying for current goal.");
     return;
   }
 

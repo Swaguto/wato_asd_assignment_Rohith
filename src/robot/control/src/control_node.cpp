@@ -29,6 +29,8 @@ ControlNode::ControlNode() : Node("control"),
     path_topic, 10, std::bind(&ControlNode::pathCallback, this, std::placeholders::_1));
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
     odom_topic, 10, std::bind(&ControlNode::odomCallback, this, std::placeholders::_1));
+  costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/costmap", 10, std::bind(&ControlNode::costmapCallback, this, std::placeholders::_1));
   cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(cmd_vel_topic, 10);
   control_timer_ = this->create_wall_timer(
     std::chrono::milliseconds(period_ms),
@@ -46,6 +48,11 @@ void ControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
   have_odom_ = true;
 }
 
+void ControlNode::costmapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+  latest_costmap_ = *msg;
+  have_costmap_ = true;
+}
+
 double ControlNode::quaternionToYaw(const geometry_msgs::msg::Quaternion& q) {
   return std::atan2(2.0 * (q.w * q.z + q.x * q.y),
                     1.0 - 2.0 * (q.y * q.y + q.z * q.z));
@@ -56,7 +63,9 @@ void ControlNode::controlTimerCallback() {
     return;
   }
 
-  const geometry_msgs::msg::Twist twist = core_.step(robot_x_, robot_y_, robot_yaw_);
+  const geometry_msgs::msg::Twist twist = core_.step(
+    robot_x_, robot_y_, robot_yaw_,
+    have_costmap_ ? &latest_costmap_ : nullptr);
   cmd_vel_pub_->publish(twist);
 }
 

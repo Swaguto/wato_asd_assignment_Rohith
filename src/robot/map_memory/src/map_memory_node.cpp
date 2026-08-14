@@ -36,6 +36,33 @@ MapMemoryNode::MapMemoryNode()
 void MapMemoryNode::costmapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
   latest_costmap_ = *msg;
   have_costmap_ = true;
+
+  if (!have_odom_) {
+    return;
+  }
+  // Like the reference implementation, an all-zero costmap (e.g. a dead
+  // lidar) carries no information: skip the merge so existing memory is not
+  // replaced by it.
+  const bool empty_costmap =
+    std::all_of(latest_costmap_.data.begin(), latest_costmap_.data.end(),
+                [](int8_t v) { return v == 0; });
+  if (empty_costmap) {
+    return;
+  }
+  // Merge whenever the robot has moved far enough from the last merge point:
+  // obstacles the lidar has just seen must reach the planner's map before
+  // the robot outruns the old plan. The timer below still forces a merge
+  // while idling.
+  const bool first = !ever_merged_;
+  const bool travelled =
+    std::hypot(robot_x_ - last_merge_x_, robot_y_ - last_merge_y_) >= update_distance_;
+  if (first || travelled) {
+    core_.merge(latest_costmap_, robot_x_, robot_y_, robot_yaw_);
+    last_merge_x_ = robot_x_;
+    last_merge_y_ = robot_y_;
+    last_merge_time_ = this->now();
+    ever_merged_ = true;
+  }
 }
 
 void MapMemoryNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -57,40 +84,17 @@ void MapMemoryNode::publishTimerCallback() {
 
   const rclcpp::Time now = this->now();
 
-  // Like the reference implementation, an all-zero costmap (e.g. a dead
-  // lidar) carries no information: skip the merge so existing memory is not
-  // replaced by it.
-  const bool empty_costmap =
-    std::all_of(latest_costmap_.data.begin(), latest_costmap_.data.end(),
-                [](int8_t v) { return v == 0; });
-  if (empty_costmap) {
-    // Publish the existing map unchanged.
-    nav_msgs::msg::OccupancyGrid out = core_.map();
-    out.header.stamp = now;
-    map_pub_->publish(out);
-    return;
-  }
-
-  // Only merge once the robot has travelled far enough from the previous
-  // merge point: close-by re-scans add no new information. A time gate
-  // (update_time) still forces merges while the robot idles so the map stays
-  // current even when the robot is standing still.
-  bool should_merge = !ever_merged_;
-  if (ever_merged_) {
-    const double travelled = std::hypot(robot_x_ - last_merge_x_, robot_y_ - last_merge_y_);
-    const double since_merge = (now - last_merge_time_).seconds();
-    should_merge = travelled >= update_distance_ || since_merge >= update_time_;
-  }
-  if (should_merge) {
+  // While the robot idles the travel gate above never trips; force a merge
+  // every update_time seconds so the map cannot grow stale beside a wall.
+  if (ever_merged_ && (now - last_merge_time_).seconds() >= update_time_) {
     core_.merge(latest_costmap_, robot_x_, robot_y_, robot_yaw_);
     last_merge_x_ = robot_x_;
     last_merge_y_ = robot_y_;
     last_merge_time_ = now;
-    ever_merged_ = true;
   }
 
   nav_msgs::msg::OccupancyGrid out = core_.map();
-  out.header.stamp = this->now();
+  out.header.stamp = now;
   map_pub_->publish(out);
 }
 

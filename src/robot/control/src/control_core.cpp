@@ -38,7 +38,8 @@ void ControlCore::updatePath(const nav_msgs::msg::Path& path) {
 }
 
 geometry_msgs::msg::Twist ControlCore::step(double robot_x, double robot_y,
-                                            double robot_yaw) const {
+                                            double robot_yaw,
+                                            const nav_msgs::msg::OccupancyGrid* local_costmap) const {
   geometry_msgs::msg::Twist twist;
 
   if (path_.poses.empty()) {
@@ -52,17 +53,54 @@ geometry_msgs::msg::Twist ControlCore::step(double robot_x, double robot_y,
   double steering = wrapAngle(heading_to_target - robot_yaw);
 
   if (std::abs(steering) > max_steering_angle_) {
-    // Keep turning toward the path instead of freezing: the target is at most
-    // 90 deg off (it was picked from the forward half-plane), so creep ahead
-    // slowly to make progress, and turn in place only when the path is
-    // effectively behind the robot.
-    if (std::abs(steering) < kPi / 2.0) {
-      twist.linear.x = 0.3 * linear_velocity_;
+    // Keep turning toward the path instead of freezing; push forward only
+    // when the path is nearly behind (nothing in the way of a turn).
+    if (std::abs(steering) > kPi / 2.0) {
+      twist.linear.x = 0.25 * linear_velocity_;
     } else {
       twist.linear.x = 0.0;
     }
   } else {
-    twist.linear.x = linear_velocity_;
+    // Slow down before sharp turns: at full speed the robot cannot negotiate
+    // the maze's 90 degree corners without drifting wide into walls. Scale
+    // the speed with how much of the steering range the turn demands.
+    const double turn_share = std::abs(steering) / max_steering_angle_;
+    twist.linear.x = linear_velocity_ * (1.0 - 0.7 * turn_share * turn_share);
+  }
+
+  // Local-costmap protection: never push at speed into an obstacle the lidar
+  // can see. The costmap lives in the sensor frame, where +x is always the
+  // robot's forward direction, so no pose math is needed here. A blocked
+  // wedge directly ahead cuts the command speed to zero; a close hot wedge
+  // limits it to a crawl. The planner replans around the wall meanwhile.
+  if (local_costmap != nullptr && local_costmap->data.size() >= 16) {
+    const double res = local_costmap->info.resolution;
+    const int width = static_cast<int>(local_costmap->info.width);
+    const double ox = local_costmap->info.origin.position.x;
+    for (const double distance : {0.6, 1.0, 1.5}) {
+      const int gx = static_cast<int>(std::floor((distance - ox) / res));
+      int blocked = 0;
+      for (int angle_cell = -2; angle_cell <= 2; ++angle_cell) {
+        const int gy = static_cast<int>(
+          std::floor((std::tan(angle_cell * 0.2) * distance - ox) / res));
+        if (gx < 0 || gx >= width || gy < 0 ||
+            gy >= static_cast<int>(local_costmap->info.height)) {
+          continue;
+        }
+        const int8_t cost = local_costmap->data[
+          static_cast<size_t>(gy) * width + gx];
+        if (cost >= 90) {
+          ++blocked;
+        }
+      }
+      if (blocked >= 3 && distance <= 1.0) {
+        twist.linear.x = 0.0;
+        break;
+      }
+      if (blocked >= 3) {
+        twist.linear.x = std::min(twist.linear.x, 0.25 * linear_velocity_);
+      }
+    }
   }
 
   steering = std::clamp(steering, -max_steering_angle_, max_steering_angle_);
