@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -57,6 +58,21 @@ void MapMemoryNode::publishTimerCallback() {
   }
 
   const rclcpp::Time now = this->now();
+
+  // Like the reference implementation, an all-zero costmap (e.g. a dead
+  // lidar) carries no information: skip the merge so existing memory is not
+  // replaced, and freeze the decay so the map cannot be wiped empty.
+  const bool empty_costmap =
+    std::all_of(latest_costmap_.data.begin(), latest_costmap_.data.end(),
+                [](int8_t v) { return v == 0; });
+  if (empty_costmap) {
+    // Publish the existing map unchanged.
+    nav_msgs::msg::OccupancyGrid out = core_.map();
+    out.header.stamp = now;
+    map_pub_->publish(out);
+    return;
+  }
+
   // Stale memory fades unless the merge below refreshes it: long sessions
   // can no longer build an impassable wall out of old obstacle hits.
   core_.decayCells(decay_rate_);
