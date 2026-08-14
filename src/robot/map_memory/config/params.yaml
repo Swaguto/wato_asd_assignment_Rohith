@@ -9,6 +9,8 @@ map_memory_node:
     map_pub_rate: 3000
     # m, distance travelled by the robot at which the map will update
     update_distance: 1.5
+    # s, max age of the map before a forced re-merge (keeps map fresh while idle)
+    update_time: 15.0
     # cost units subtracted from unrefreshed cells every publish
     decay_rate: 6
 

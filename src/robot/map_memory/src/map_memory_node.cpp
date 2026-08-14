@@ -11,6 +11,7 @@ MapMemoryNode::MapMemoryNode()
   this->declare_parameter("map_topic", "/map");
   this->declare_parameter("map_pub_rate", 3000);
   this->declare_parameter("update_distance", 1.5);
+  this->declare_parameter("update_time", 15.0);
   this->declare_parameter("decay_rate", 6);
 
   const std::string costmap_topic = this->get_parameter("local_costmap_topic").as_string();
@@ -18,6 +19,7 @@ MapMemoryNode::MapMemoryNode()
   const std::string map_topic = this->get_parameter("map_topic").as_string();
   const int map_pub_rate = this->get_parameter("map_pub_rate").as_int();
   update_distance_ = this->get_parameter("update_distance").as_double();
+  update_time_ = this->get_parameter("update_time").as_double();
   decay_rate_ = this->get_parameter("decay_rate").as_int();
 
   costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
@@ -54,19 +56,26 @@ void MapMemoryNode::publishTimerCallback() {
     return;
   }
 
+  const rclcpp::Time now = this->now();
   // Stale memory fades unless the merge below refreshes it: long sessions
   // can no longer build an impassable wall out of old obstacle hits.
   core_.decayCells(decay_rate_);
 
   // Only merge once the robot has travelled far enough from the previous
-  // merge point: close-by re-scans add no new information.
-  const double travelled = std::hypot(robot_x_ - last_merge_x_, robot_y_ - last_merge_y_);
-  if (ever_merged_ && travelled < update_distance_) {
-    // Publish the existing map unchanged.
-  } else {
+  // merge point: close-by re-scans add no new information. A time gate
+  // (update_time) still forces merges while the robot idles so the map can
+  // never decay to empty and let the planner plan through unseen walls.
+  bool should_merge = !ever_merged_;
+  if (ever_merged_) {
+    const double travelled = std::hypot(robot_x_ - last_merge_x_, robot_y_ - last_merge_y_);
+    const double since_merge = (now - last_merge_time_).seconds();
+    should_merge = travelled >= update_distance_ || since_merge >= update_time_;
+  }
+  if (should_merge) {
     core_.merge(latest_costmap_, robot_x_, robot_y_, robot_yaw_);
     last_merge_x_ = robot_x_;
     last_merge_y_ = robot_y_;
+    last_merge_time_ = now;
     ever_merged_ = true;
   }
 
