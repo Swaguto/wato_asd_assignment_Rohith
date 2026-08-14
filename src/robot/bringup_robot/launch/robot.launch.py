@@ -94,8 +94,8 @@ def generate_launch_description():
     ld.add_action(odometry_spoof_node)
 
     #################### TF Throttle Node #####################
-    # The gazebo bridge publishes the transform tree on /tf_raw only;
-    # TF consumers read /tf, so relay it at a fixed rate.
+    # The gazebo bridge publishes the robot's transforms on /tf_raw only;
+    # tf consumers read /tf, so relay it at a fixed rate.
     tf_throttle_node = Node(
         package='tf_throttle',
         name='tf_throttle',

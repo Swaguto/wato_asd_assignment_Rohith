@@ -20,7 +20,7 @@ OdometrySpoofNode::OdometrySpoofNode() : Node("odometry_spoof") {
 }
 
 void OdometrySpoofNode::timerCallback() {
-  // We'll look up the transform from sim_world -> robot/chassis/lidar,
+  // We'll look up the transform from sim_world -> robot/chassis/lidar, 
   // note robot frame is usually not the lidar sensor, but we do so to make this
   // assignment easier
   const std::string target_frame = "robot/chassis/lidar";
