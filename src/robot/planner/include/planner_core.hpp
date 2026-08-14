@@ -38,6 +38,8 @@ class PlannerCore {
     bool toCell(const nav_msgs::msg::OccupancyGrid& map,
                 double wx, double wy, Cell& cell) const;
     static int8_t cellCost(const nav_msgs::msg::OccupancyGrid& map, const Cell& cell);
+    bool relaxCell(const nav_msgs::msg::OccupancyGrid& map,
+                   Cell& cell, const char* label) const;
     static double heuristic(const Cell& a, const Cell& b);
     static double stepCost(const Cell& from, const Cell& to);
     void lineOfSightShortcut(const nav_msgs::msg::OccupancyGrid& map, std::vector<Cell>& cells) const;

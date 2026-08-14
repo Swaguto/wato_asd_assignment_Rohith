@@ -47,6 +47,14 @@ bool PlannerCore::plan(const nav_msgs::msg::OccupancyGrid& map,
     RCLCPP_WARN(logger_, "Goal (%.2f, %.2f) is outside the map.", goal_x, goal_y);
     return false;
   }
+  if (!relaxCell(map, start, "start")) {
+    RCLCPP_WARN(logger_, "No traversable cell within 1 m of the start. Aborting.");
+    return false;
+  }
+  if (!relaxCell(map, goal, "goal")) {
+    RCLCPP_WARN(logger_, "No traversable cell within 1 m of the goal. Aborting.");
+    return false;
+  }
 
   const int width = static_cast<int>(map.info.width);
   const int height = static_cast<int>(map.info.height);
@@ -143,6 +151,52 @@ bool PlannerCore::toCell(const nav_msgs::msg::OccupancyGrid& map,
 
 int8_t PlannerCore::cellCost(const nav_msgs::msg::OccupancyGrid& map, const Cell& cell) {
   return map.data[static_cast<size_t>(cell.y) * map.info.width + cell.x];
+}
+
+bool PlannerCore::relaxCell(const nav_msgs::msg::OccupancyGrid& map,
+                            Cell& cell, const char* label) const {
+  // A wall face or its inflated ring can cover the requested cell even for a
+  // perfectly valid goal: goals are expected to sit on free floor with the
+  // robot stopping within goal_tolerance of them. When the cell is blocked,
+  // snap to the nearest traversable neighbour (up to two cells away, which
+  // is still inside the 1.5 m goal tolerance at 0.5 m resolution).
+  if (cellCost(map, cell) <= kBlockedCost) {
+    return true;
+  }
+
+  const int width = static_cast<int>(map.info.width);
+  const int height = static_cast<int>(map.info.height);
+  const int start_cost = cellCost(map, cell);
+
+  for (int radius = 1; radius <= 2; ++radius) {
+    Cell best{-1, -1};
+    int best_cost = std::numeric_limits<int>::max();
+    for (int dy = -radius; dy <= radius; ++dy) {
+      for (int dx = -radius; dx <= radius; ++dx) {
+        if (dx * dx + dy * dy > radius * radius) {
+          continue;
+        }
+        const Cell candidate{cell.x + dx, cell.y + dy};
+        if (candidate.x < 0 || candidate.x >= width ||
+            candidate.y < 0 || candidate.y >= height) {
+          continue;
+        }
+        const int cost = cellCost(map, candidate);
+        if (cost > kBlockedCost || cost >= best_cost) {
+          continue;
+        }
+        best = candidate;
+        best_cost = cost;
+      }
+    }
+    if (best.x >= 0) {
+      RCLCPP_WARN(logger_, "%s cell (%d, %d) blocked (cost %d); relaxed to (%d, %d).",
+                  label, cell.x, cell.y, start_cost, best.x, best.y);
+      cell = best;
+      return true;
+    }
+  }
+  return false;
 }
 
 double PlannerCore::heuristic(const Cell& a, const Cell& b) {
