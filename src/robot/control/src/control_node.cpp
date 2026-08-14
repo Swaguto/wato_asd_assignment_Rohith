@@ -5,8 +5,7 @@
 #include "control_node.hpp"
 
 ControlNode::ControlNode() : Node("control"),
-    core_(robot::ControlCore(this->get_logger())),
-    lcm_relay_() {
+    core_(robot::ControlCore(this->get_logger())) {
   this->declare_parameter("path_topic", "/path");
   this->declare_parameter("odom_topic", "/odom/filtered");
   this->declare_parameter("cmd_vel_topic", "/cmd_vel");
@@ -58,11 +57,6 @@ void ControlNode::controlTimerCallback() {
   }
 
   const geometry_msgs::msg::Twist twist = core_.step(robot_x_, robot_y_, robot_yaw_);
-
-  // Mirror the steering command onto the chassis relay so the LCM-driven
-  // robot always receives fresh /cmd_vel guidance.
-  lcm_relay_.setChassisOmega(twist.angular.z);
-
   cmd_vel_pub_->publish(twist);
 }
 

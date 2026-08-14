@@ -37,9 +37,7 @@ ament_target_dependencies(control_lib
   tf2)
 
 # Create ROS2 node executable from source files
-add_executable(control_node
-  src/control_node.cpp
-  src/lcm_relay.cpp)
+add_executable(control_node src/control_node.cpp)
 # Link to the previously built library to access Transformer classes and methods
 target_link_libraries(control_node control_lib)
 

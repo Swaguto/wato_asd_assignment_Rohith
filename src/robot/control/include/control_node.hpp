@@ -7,7 +7,6 @@
 #include "geometry_msgs/msg/twist.hpp"
 
 #include "control_core.hpp"
-#include "lcm_relay.hpp"
 
 class ControlNode : public rclcpp::Node {
   public:
@@ -20,7 +19,6 @@ class ControlNode : public rclcpp::Node {
     static double quaternionToYaw(const geometry_msgs::msg::Quaternion& q);
 
     robot::ControlCore core_;
-    robot::LcmRelay lcm_relay_;
 
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;

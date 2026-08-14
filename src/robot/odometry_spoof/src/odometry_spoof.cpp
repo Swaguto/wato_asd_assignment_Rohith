@@ -20,11 +20,10 @@ OdometrySpoofNode::OdometrySpoofNode() : Node("odometry_spoof") {
 }
 
 void OdometrySpoofNode::timerCallback() {
-  // Look up the transform from sim_world -> robot/chassis. Note the lidar
-  // sits 0.8 m forward of the chassis; publishing the lidar pose as the
-  // robot pose makes the reported position swing during rotation, which
-  // wrecks goal tracking. The chassis pose is the robot pose.
-  const std::string target_frame = "robot/chassis";
+  // We'll look up the transform from sim_world -> robot/chassis/lidar,
+  // note robot frame is usually not the lidar sensor, but we do so to make this
+  // assignment easier
+  const std::string target_frame = "robot/chassis/lidar";
   const std::string source_frame = "sim_world";
 
   geometry_msgs::msg::TransformStamped transform_stamped;

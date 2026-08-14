@@ -12,4 +12,4 @@ costmap_node:
         orientation:
           w: 1.0
       
-      inflation_radius: 1.5
+      inflation_radius: 2.0

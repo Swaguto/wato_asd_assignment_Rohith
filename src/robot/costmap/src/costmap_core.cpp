@@ -34,7 +34,7 @@ void CostmapCore::readParameters(rclcpp::Node* node) {
   node->declare_parameter("costmap.height", 120);
   node->declare_parameter("costmap.origin.position.x", -24.0);
   node->declare_parameter("costmap.origin.position.y", -24.0);
-  node->declare_parameter("costmap.inflation_radius", 1.5);
+  node->declare_parameter("costmap.inflation_radius", 2.0);
 
   resolution_ = node->get_parameter("costmap.resolution").as_double();
   width_ = node->get_parameter("costmap.width").as_int();

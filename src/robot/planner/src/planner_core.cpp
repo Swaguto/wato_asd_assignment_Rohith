@@ -13,10 +13,10 @@ namespace
 // the obstacle itself, so most avoidance is handled by the cost penalty.
 constexpr int8_t kBlockedCost = 90;
 // Cost added to a path step per unit of occupancy in the destination cell.
-// A cell in the inflated gradient (e.g. cost 40) adds ~1.6 m of equivalent
-// travel, which makes hugging obstacles noticeably more expensive than a
-// modest detour.
-constexpr double kCostPenaltyScale = 0.04;
+// A cell in the inflated gradient (e.g. cost 40) adds ~4 m of equivalent
+// travel, which keeps the path on the outer gradient ring so the body
+// clears boxes and walls.
+constexpr double kCostPenaltyScale = 0.10;
 // Grid coordinates used by the search queue.
 using Cell = PlannerCore::Cell;
 struct QueueEntry {
