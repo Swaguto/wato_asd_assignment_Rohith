@@ -1,3 +1,11 @@
-# planner_node:
-#   ros__parameters:
-    
+planner_node:
+  ros__parameters:
+    map_topic: "/map" # global map topic with which the planner subscribes to
+    goal_topic: "/goal_point" # goal point topic with which the planner subscribes to
+    odom_topic: "/odom/filtered" # odometry topic with which the planner subscribes to
+    path_topic: "/path" # path topic with which the planner publishes the plan to
+
+    # m, distance to the goal at which the planner considers the goal reached
+    goal_tolerance: 1.0
+    # s, how long the planner may chase a goal before giving up
+    plan_timeout_seconds: 60.0
