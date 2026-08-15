@@ -24,6 +24,7 @@ class PlannerNode : public rclcpp::Node {
 
     void attemptPlan();
     void clearGoal();
+    double distanceToPath() const;
 
     robot::PlannerCore core_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
@@ -41,6 +42,8 @@ class PlannerNode : public rclcpp::Node {
     bool goal_active_ = false;
     geometry_msgs::msg::PointStamped goal_;
     rclcpp::Time goal_started_;
+    std::vector<geometry_msgs::msg::PoseStamped> current_path_;
+    rclcpp::Time last_plan_time_;
 
     double goal_tolerance_ = 1.5;
     double plan_timeout_s_ = 60.0;

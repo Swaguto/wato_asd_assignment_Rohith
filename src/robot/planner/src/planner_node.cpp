@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <memory>
 
 #include "planner_node.hpp"
@@ -81,11 +82,28 @@ void PlannerNode::statusTimerCallback() {
       return;
     }
   }
-  // Refresh the path at 2 Hz even when the map has not changed: the robot
-  // outruns the old plan between map updates and would overshoot corners.
+  // Re-plan only when the robot has drifted from the current plan (e.g. a
+  // wall pushed it aside) or the plan has gone stale. Re-planning on every
+  // tick made the published path re-snap to the robot continuously, which
+  // looked erratic and caused constant micro-corrections while driving.
+  // The map callback also re-plans on every fresh /map, so a moving wall
+  // still gets a fresh path within one map period.
   if (have_map_ && have_odom_) {
-    attemptPlan();
+    const double since_plan = (this->now() - last_plan_time_).seconds();
+    if (distanceToPath() > 1.2 || since_plan > 5.0) {
+      attemptPlan();
+    }
   }
+}
+
+double PlannerNode::distanceToPath() const {
+  double best = std::numeric_limits<double>::max();
+  for (const auto& pose : current_path_) {
+    const double dx = pose.pose.position.x - odom_x_;
+    const double dy = pose.pose.position.y - odom_y_;
+    best = std::min(best, std::hypot(dx, dy));
+  }
+  return best;
 }
 
 void PlannerNode::attemptPlan() {
@@ -109,6 +127,8 @@ void PlannerNode::attemptPlan() {
   }
 
   path_pub_->publish(path);
+  current_path_ = path.poses;
+  last_plan_time_ = this->now();
 }
 
 void PlannerNode::clearGoal() {

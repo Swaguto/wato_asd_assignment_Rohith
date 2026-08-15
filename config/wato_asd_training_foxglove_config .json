@@ -118,7 +118,7 @@
         "/costmap": {
           "visible": true,
           "colorMode": "costmap",
-          "alpha": 1
+          "alpha": 0.35
         },
         "/path": {
           "visible": true,
@@ -136,6 +136,7 @@
           "instanceId": "9e830917-d6fe-4f25-8e7b-25afa5a47d21",
           "layerId": "foxglove.Urdf",
           "sourceType": "topic",
+          "url": "",
           "filePath": "",
           "parameter": "",
           "topic": "/robot_description_live",
@@ -173,6 +174,7 @@
           "instanceId": "cadf14d8-072e-4af6-8fd0-60bf81d00399",
           "layerId": "foxglove.Urdf",
           "sourceType": "topic",
+          "url": "",
           "filePath": "",
           "parameter": "",
           "topic": "/robot_description_live",
@@ -180,6 +182,39 @@
           "displayMode": "auto",
           "fallbackColor": "#454545",
           "order": 3
+        },
+        "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d": {
+          "visible": true,
+          "frameLocked": true,
+          "label": "Planned Path",
+          "instanceId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+          "layerId": "foxglove.Path",
+          "sourceType": "topic",
+          "topic": "/path",
+          "url": "",
+          "filePath": "",
+          "parameter": "",
+          "framePrefix": "",
+          "color": "#1eff68ff",
+          "lineWidth": 4,
+          "order": 4
+        },
+        "f6e5d4c3-b2a1-4f0e-9d8c-7b6a5f4e3d2c": {
+          "visible": true,
+          "frameLocked": false,
+          "label": "Map (occupancy)",
+          "instanceId": "f6e5d4c3-b2a1-4f0e-9d8c-7b6a5f4e3d2c",
+          "layerId": "foxglove.OccupancyGrid",
+          "sourceType": "topic",
+          "topic": "/map",
+          "url": "",
+          "filePath": "",
+          "parameter": "",
+          "framePrefix": "",
+          "color": "#ffffff80",
+          "colorMode": "costmap",
+          "alpha": 0.5,
+          "order": 5
         }
       },
       "publish": {

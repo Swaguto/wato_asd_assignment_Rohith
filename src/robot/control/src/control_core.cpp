@@ -65,19 +65,21 @@ geometry_msgs::msg::Twist ControlCore::step(double robot_x, double robot_y,
     // the maze's 90 degree corners without drifting wide into walls. Scale
     // the speed with how much of the steering range the turn demands.
     const double turn_share = std::abs(steering) / max_steering_angle_;
-    twist.linear.x = linear_velocity_ * (1.0 - 0.7 * turn_share * turn_share);
+    twist.linear.x = linear_velocity_ * (1.0 - 0.5 * turn_share * turn_share);
   }
 
   // Local-costmap protection: never push at speed into an obstacle the lidar
   // can see. The costmap lives in the sensor frame, where +x is always the
   // robot's forward direction, so no pose math is needed here. A blocked
-  // wedge directly ahead cuts the command speed to zero; a close hot wedge
-  // limits it to a crawl. The planner replans around the wall meanwhile.
+  // wedge within 0.5 m stops the robot; one within 0.9 m limits it to a
+  // crawl. Farther than that, drive normally: braking from 1.5 m out made
+  // the robot park short of goals in tight layouts. The planner replans
+  // around the wall meanwhile.
   if (local_costmap != nullptr && local_costmap->data.size() >= 16) {
     const double res = local_costmap->info.resolution;
     const int width = static_cast<int>(local_costmap->info.width);
     const double ox = local_costmap->info.origin.position.x;
-    for (const double distance : {0.6, 1.0, 1.5}) {
+    for (const double distance : {0.5, 0.9}) {
       const int gx = static_cast<int>(std::floor((distance - ox) / res));
       int blocked = 0;
       for (int angle_cell = -2; angle_cell <= 2; ++angle_cell) {
@@ -93,12 +95,12 @@ geometry_msgs::msg::Twist ControlCore::step(double robot_x, double robot_y,
           ++blocked;
         }
       }
-      if (blocked >= 3 && distance <= 1.0) {
+      if (blocked >= 3 && distance <= 0.5) {
         twist.linear.x = 0.0;
         break;
       }
       if (blocked >= 3) {
-        twist.linear.x = std::min(twist.linear.x, 0.25 * linear_velocity_);
+        twist.linear.x = std::min(twist.linear.x, 0.35 * linear_velocity_);
       }
     }
   }
