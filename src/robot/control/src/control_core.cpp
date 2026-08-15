@@ -46,6 +46,49 @@ geometry_msgs::msg::Twist ControlCore::step(double robot_x, double robot_y,
     return twist;
   }
 
+  // Escape maneuver: if the robot's own body overlaps a hard obstacle
+  // (cost >= 90 in the 3x3 cells around the robot centre), the path is
+  // unusable and the planner cannot start from inside a wall: back out with
+  // a turn away from the more blocked side until the body is clear. The
+  // planner re-plans once the start cell is free again.
+  if (local_costmap != nullptr && local_costmap->data.size() >= 16) {
+    const double res = local_costmap->info.resolution;
+    const int width = static_cast<int>(local_costmap->info.width);
+    const double ox = local_costmap->info.origin.position.x;
+    const double oy = local_costmap->info.origin.position.y;
+    const int cx = static_cast<int>(std::floor((0.0 - ox) / res));
+    const int cy = static_cast<int>(std::floor((0.0 - oy) / res));
+    int hot = 0;
+    int blocked_left = 0;
+    int blocked_right = 0;
+    for (int dy = -1; dy <= 1; ++dy) {
+      for (int dx = -1; dx <= 1; ++dx) {
+        const int gx = cx + dx;
+        const int gy = cy + dy;
+        if (gx < 0 || gx >= width ||
+            gy < 0 || gy >= static_cast<int>(local_costmap->info.height)) {
+          continue;
+        }
+        const int8_t cost = local_costmap->data[
+          static_cast<size_t>(gy) * width + gx];
+        if (cost >= 90) {
+          ++hot;
+          if (dx < 0) {
+            ++blocked_left;
+          }
+          if (dx > 0) {
+            ++blocked_right;
+          }
+        }
+      }
+    }
+    if (hot >= 3) {
+      twist.linear.x = -0.3 * linear_velocity_;
+      twist.angular.z = blocked_left > blocked_right ? -0.5 : 0.5;
+      return twist;
+    }
+  }
+
   const int idx = findLookaheadIndex(robot_x, robot_y, robot_yaw);
   const auto& target = path_.poses[static_cast<size_t>(idx)].pose.position;
 

@@ -9,9 +9,12 @@ namespace robot
 namespace
 {
 // Cells with occupancy above this are considered physically blocked. With
-// the 0.5 m global map resolution the gradient only reaches this level on
-// the obstacle itself, so most avoidance is handled by the cost penalty.
-constexpr int8_t kBlockedCost = 90;
+// the 0.5 m global map resolution the 1.5 m inflation gradient reaches 83 on
+// the ring directly around an obstacle (0.25 m away): a 90 threshold lets
+// paths thread through that ring and scrape the wall. Blocking the 60+ ring
+// instead keeps the path at least ~0.75 m from any obstacle, where the
+// robot body (0.35 m half width) clears it.
+constexpr int8_t kBlockedCost = 60;
 // Cost added to a path step per unit of occupancy in the destination cell,
 // matching the reference tuning: a cost-40 gradient cell adds ~1.6 m of
 // equivalent travel, so inflated zones are avoided without forcing detours.
