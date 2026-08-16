@@ -1,3 +1,18 @@
-# costmap_node:
-#   ros__parameters:
+costmap_node:
+  ros__parameters:
+    laserscan_topic: "/lidar" # laserscan topic with which costmap node subscribes to
+    costmap_topic: "/costmap" # occupancy grid topic with which costmap node publishes the costmap to
 
+    costmap:
+      resolution: 0.4 # m per cell; finer than the global map so fusion leaves no holes
+      width: 120
+      height: 120
+
+      origin:
+        position:
+          x: -24.0 # local window origin in the lidar frame, centered on the robot
+          y: -24.0
+        orientation:
+          w: 1.0
+
+      inflation_radius: 1.5 # m, cost band drawn around each obstacle hit

@@ -1,3 +1,27 @@
-# map_memory_node:
-#   ros__parameters:
-    
+map_memory_node:
+  ros__parameters:
+    local_costmap_topic: "/costmap" # local costmap topic with which map memory node subscribes to
+    odom_topic: "/odom/filtered" # odometry topic with which map memory node subscribes to
+    map_topic: "/map" # map topic with which the map will be published to
+
+    # ms, rate at which the accumulated map is republished (also the rate at
+    # which the planner gets a chance to replan)
+    map_pub_rate: 1000
+    # m, distance the robot must travel before the map is fused again
+    update_distance: 1.5
+
+    global_map:
+      resolution: 0.5 # m per cell; coarser than the local costmap so fusion
+                      # matches local cells onto the global grid without holes
+      width: 60
+      height: 60
+      # m, cost band redrawn around each occupied cell directly on the global
+      # grid, matching the local costmap's inflation radius
+      inflation_radius: 1.5
+
+      origin:
+        position:
+          x: -15.0 # world-frame origin of the global map
+          y: -15.0
+        orientation:
+          w: 1.0

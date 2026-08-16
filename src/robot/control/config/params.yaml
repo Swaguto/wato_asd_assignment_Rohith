@@ -1,3 +1,18 @@
-# control_node:
-#   ros__parameters:
-    
+control_node:
+  ros__parameters:
+    path_topic: "/path" # path topic with which the control node subscribes to
+    odom_topic: "/odom/filtered" # odometry topic with which the control node subscribes to
+    cmd_vel_topic: "/cmd_vel" # velocity command topic with which the control node publishes to
+
+    # ms, rate at which velocity commands are published
+    control_period_ms: 100
+    # m, distance ahead of the robot at which the path point is chased
+    lookahead_distance: 1.5
+    # rad, sharpest turn the robot is allowed to drive through
+    max_steering_angle: 0.5
+    # gain coefficient that defines how much we should consider the angle error
+    steering_gain: 1.5
+    # m/s, forward speed
+    linear_velocity: 1.0
+    # m, distance to the end of the path at which the robot stops
+    goal_tolerance: 1.0
